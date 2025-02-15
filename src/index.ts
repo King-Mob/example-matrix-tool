@@ -30,7 +30,7 @@ const start = async () => {
   client.on(
     sdk.RoomEvent.Timeline,
     async function (event, room, toStartOfTimeline) {
-      console.log(`Timeline event ${event.type} from ${event.sender} in room ${room.roomId}`);
+      console.log(`Timeline event ${event.getType()} from ${event.sender} in room ${room.roomId}`);
       console.log(`toStartOfTimeline: ${toStartOfTimeline}`);
       const eventTime = event.event.origin_server_ts;
 
