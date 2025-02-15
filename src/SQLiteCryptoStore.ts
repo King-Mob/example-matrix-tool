@@ -10,16 +10,44 @@ import { IOlmDevice } from "matrix-js-sdk/lib/crypto/algorithms/megolm";
 
 /**
  * A crypto storage provider using SQLite for the Matrix JS SDK.
- * Inspired by the RustSdkCryptoStorageProvider from matrix-bot-sdk.
+ * Implements direct database storage without in-memory caching.
  */
-export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
+export class SQLiteCryptoStore implements CryptoStore {
   private db: Database.Database;
 
   constructor(private readonly storagePath: string) {
-    super();
-    // Ensure the directory exists
     const dbPath = path.join(storagePath, 'crypto.db');
     this.db = new Database(dbPath);
+    this.setupDatabase();
+  }
+
+  async startup(): Promise<CryptoStore> {
+    // Database is already set up in constructor
+    return this;
+  }
+
+  async deleteAllData(): Promise<void> {
+    // Drop all tables and recreate them
+    this.db.exec(`
+      DROP TABLE IF EXISTS state;
+      DROP TABLE IF EXISTS rooms;
+      DROP TABLE IF EXISTS olm_sessions;
+      DROP TABLE IF EXISTS account;
+      DROP TABLE IF EXISTS cross_signing_keys;
+      DROP TABLE IF EXISTS secret_store;
+      DROP TABLE IF EXISTS inbound_group_sessions;
+      DROP TABLE IF EXISTS outgoing_room_key_requests;
+      DROP TABLE IF EXISTS session_problems;
+      DROP TABLE IF EXISTS sessions_needing_backup;
+      DROP TABLE IF EXISTS shared_history_inbound_sessions;
+      DROP TABLE IF EXISTS parked_shared_history;
+      DROP TABLE IF EXISTS device_data;
+      DROP TABLE IF EXISTS user_tracking_status;
+      DROP TABLE IF EXISTS user_cross_signing_info;
+      DROP TABLE IF EXISTS sync_token;
+    `);
+
+    // Recreate the tables
     this.setupDatabase();
   }
 
@@ -316,7 +344,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     const stmt = this.db.prepare('SELECT room_id, sender_key, session_id, session_data FROM inbound_group_sessions');
     const rows = stmt.all();
     console.log(`Found ${rows.length} sessions in database`);
-    
+
     // Call the callback for each session individually
     for (const row of rows) {
       const sessionData = JSON.parse(row.session_data);
@@ -335,7 +363,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
       'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_id = ?'
     );
     const result = stmt.get(request.requestId);
-    
+
     if (result) {
       return {
         requestId: result.request_id,
@@ -368,7 +396,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
       'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_body = ?'
     );
     const result = stmt.get(JSON.stringify(requestBody));
-    
+
     if (!result) return null;
 
     return {
@@ -384,13 +412,13 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   async getOutgoingRoomKeyRequestByState(wantedStates: number[]): Promise<OutgoingRoomKeyRequest | null> {
     const placeholders = wantedStates.map(() => '?').join(',');
     const stmt = this.db.prepare(
-      `SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state 
-       FROM outgoing_room_key_requests 
+      `SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state
+       FROM outgoing_room_key_requests
        WHERE state IN (${placeholders})
        LIMIT 1`
     );
     const result = stmt.get(...wantedStates);
-    
+
     if (!result) return null;
 
     return {
@@ -408,7 +436,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
       'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE state = ?'
     );
     const results = stmt.all(wantedState);
-    
+
     return results.map(result => ({
       requestId: result.request_id,
       requestTxnId: result.request_txn_id,
@@ -426,17 +454,17 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   ): Promise<OutgoingRoomKeyRequest[]> {
     const placeholders = wantedStates.map(() => '?').join(',');
     const stmt = this.db.prepare(
-      `SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state 
-       FROM outgoing_room_key_requests 
+      `SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state
+       FROM outgoing_room_key_requests
        WHERE state IN (${placeholders})
        AND recipients LIKE ?`
     );
-    
+
     // Search for recipients that include this user/device combination
     // Note: This is a bit of a hack since we're searching JSON as text
     const targetPattern = `%"userId":"${userId}"%"deviceId":"${deviceId}"%`;
     const results = stmt.all(...wantedStates, targetPattern);
-    
+
     return results.map(result => ({
       requestId: result.request_id,
       requestTxnId: result.request_txn_id,
@@ -457,7 +485,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
       'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
     );
     const current = stmt.get(requestId, expectedState);
-    
+
     if (!current) return null;
 
     // Merge current with updates
@@ -495,7 +523,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
       'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
     );
     const current = stmt.get(requestId, expectedState);
-    
+
     if (!current) return null;
 
     // Delete the record
@@ -524,14 +552,14 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   async getEndToEndSessionProblem(deviceKey: string, timestamp: number): Promise<IProblem | null> {
     // Get the most recent problem for this device that occurred before the given timestamp
     const stmt = this.db.prepare(
-      `SELECT type, fixed, time 
-       FROM session_problems 
-       WHERE device_key = ? AND time <= ? 
-       ORDER BY time DESC 
+      `SELECT type, fixed, time
+       FROM session_problems
+       WHERE device_key = ? AND time <= ?
+       ORDER BY time DESC
        LIMIT 1`
     );
     const result = stmt.get(deviceKey, timestamp);
-    
+
     if (!result) return null;
 
     return {
@@ -544,12 +572,12 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   async filterOutNotifiedErrorDevices(devices: IOlmDevice[]): Promise<IOlmDevice[]> {
     // Get all devices that have had problems marked as fixed
     const stmt = this.db.prepare(
-      `SELECT DISTINCT device_key 
-       FROM session_problems 
+      `SELECT DISTINCT device_key
+       FROM session_problems
        WHERE fixed = true`
     );
     const fixedDevices = new Set(stmt.all().map(row => row.device_key));
-    
+
     // Filter out devices that have had their problems marked as fixed
     return devices.filter(device => !fixedDevices.has(device.userId + ":" + device.deviceInfo.deviceId));
   }
@@ -559,15 +587,15 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     const stmt = this.db.prepare(
       `SELECT s.room_id, s.sender_key, s.session_id, i.session_data
        FROM sessions_needing_backup s
-       INNER JOIN inbound_group_sessions i 
-         ON s.room_id = i.room_id 
-         AND s.sender_key = i.sender_key 
+       INNER JOIN inbound_group_sessions i
+         ON s.room_id = i.room_id
+         AND s.sender_key = i.sender_key
          AND s.session_id = i.session_id
        WHERE s.needs_backup = true
        LIMIT ?`
     );
     const results = stmt.all(limit);
-    
+
     return results.map(row => ({
       senderKey: row.sender_key,
       sessionId: row.session_id,
@@ -585,8 +613,8 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
 
   async unmarkSessionsNeedingBackup(sessions: ISession[], _txn?: unknown): Promise<void> {
     const stmt = this.db.prepare(
-      `UPDATE sessions_needing_backup 
-       SET needs_backup = false 
+      `UPDATE sessions_needing_backup
+       SET needs_backup = false
        WHERE room_id = ? AND sender_key = ? AND session_id = ?`
     );
 
@@ -639,7 +667,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
       'SELECT sender_key, session_id FROM shared_history_inbound_sessions WHERE room_id = ?'
     );
     const results = stmt.all(roomId);
-    
+
     return results.map(row => [row.sender_key, row.session_id]);
   }
 
@@ -649,11 +677,11 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     _txn?: unknown
   ): Promise<void> {
     const stmt = this.db.prepare(
-      `INSERT OR REPLACE INTO parked_shared_history 
-       (room_id, sender_id, sender_key, session_id, session_key, keys_claimed, forwarding_curve25519_key_chain) 
+      `INSERT OR REPLACE INTO parked_shared_history
+       (room_id, sender_id, sender_key, session_id, session_key, keys_claimed, forwarding_curve25519_key_chain)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
-    
+
     stmt.run(
       roomId,
       data.senderId,
@@ -671,12 +699,12 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   ): Promise<ParkedSharedHistory[]> {
     // First get all parked history for this room
     const selectStmt = this.db.prepare(
-      `SELECT sender_id, sender_key, session_id, session_key, keys_claimed, forwarding_curve25519_key_chain 
-       FROM parked_shared_history 
+      `SELECT sender_id, sender_key, session_id, session_key, keys_claimed, forwarding_curve25519_key_chain
+       FROM parked_shared_history
        WHERE room_id = ?`
     );
     const results = selectStmt.all(roomId);
-    
+
     if (results.length === 0) {
       return [];
     }
@@ -684,7 +712,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     // Delete the records we're about to return
     const deleteStmt = this.db.prepare('DELETE FROM parked_shared_history WHERE room_id = ?');
     deleteStmt.run(roomId);
-    
+
     // Return the found records
     return results.map(row => ({
       senderId: row.sender_id,
@@ -707,7 +735,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     const devices: { [userId: string]: { [deviceId: string]: any } } = {};
     const trackingStatus: { [userId: string]: any } = {};
     let crossSigningInfo: Record<string, any> = {};
-    
+
     // Build devices map
     for (const row of deviceStmt.all()) {
       if (!devices[row.user_id]) {
@@ -786,6 +814,112 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     }
   }
 
+  // Session counting and management
+  countEndToEndSessions(_txn: unknown, func: (count: number) => void): void {
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM olm_sessions');
+    const result = stmt.get();
+    func(result.count);
+  }
+
+  getEndToEndSession(
+    deviceKey: string,
+    sessionId: string,
+    _txn: unknown,
+    func: (session: ISessionInfo | null) => void
+  ): void {
+    const stmt = this.db.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
+    const result = stmt.get(sessionId);
+
+    if (!result) {
+      func(null);
+      return;
+    }
+
+    func({
+      deviceKey,
+      sessionId,
+      session: result.pickle,
+    });
+  }
+
+  getEndToEndSessions(
+    deviceKey: string,
+    _txn: unknown,
+    func: (sessions: { [sessionId: string]: ISessionInfo }) => void
+  ): void {
+    const stmt = this.db.prepare('SELECT session_id, pickle FROM olm_sessions');
+    const results = stmt.all();
+
+    const sessions: { [sessionId: string]: ISessionInfo } = {};
+    for (const row of results) {
+      sessions[row.session_id] = {
+        deviceKey,
+        sessionId: row.session_id,
+        session: row.pickle,
+      };
+    }
+
+    func(sessions);
+  }
+
+  getAllEndToEndSessions(
+    _txn: unknown,
+    func: (session: ISessionInfo) => void
+  ): void {
+    const stmt = this.db.prepare('SELECT session_id, pickle FROM olm_sessions');
+    const results = stmt.all();
+
+    for (const row of results) {
+      func({
+        sessionId: row.session_id,
+        session: row.pickle,
+      });
+    }
+  }
+
+  storeEndToEndSession(
+    deviceKey: string,
+    sessionId: string,
+    sessionInfo: ISessionInfo,
+    _txn: unknown
+  ): void {
+    const stmt = this.db.prepare(
+      'INSERT OR REPLACE INTO olm_sessions (session_id, pickle) VALUES (?, ?)'
+    );
+    stmt.run(sessionId, sessionInfo.session);
+  }
+
+  // Inbound group session management
+  addEndToEndInboundGroupSession(
+    senderCurve25519Key: string,
+    sessionId: string,
+    sessionData: InboundGroupSessionData,
+    _txn: unknown
+  ): void {
+    // This is an alias for storeEndToEndInboundGroupSession
+    this.storeEndToEndInboundGroupSession(senderCurve25519Key, sessionId, sessionData, _txn);
+  }
+
+  storeEndToEndInboundGroupSessionWithheld(
+    senderCurve25519Key: string,
+    sessionId: string,
+    sessionData: IWithheld,
+    _txn: unknown
+  ): void {
+    // Store withheld session data in the same table with a special flag or prefix
+    const stmt = this.db.prepare(
+      `INSERT OR REPLACE INTO inbound_group_sessions
+       (room_id, sender_key, session_id, session_data)
+       VALUES (?, ?, ?, ?)`
+    );
+    stmt.run(
+      sessionData.room_id,
+      senderCurve25519Key,
+      sessionId,
+      JSON.stringify({ ...sessionData, __withheld: true })
+    );
+  }
+
   // End-to-end room management
   storeEndToEndRoom(roomId: string, roomInfo: IRoomEncryption, _txn: unknown): void {
     const stmt = this.db.prepare('INSERT OR REPLACE INTO rooms (room_id, config) VALUES (?, ?)');
@@ -795,14 +929,12 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   getEndToEndRooms(_txn: unknown, func: (rooms: Record<string, IRoomEncryption>) => void): void {
     const stmt = this.db.prepare('SELECT room_id, config FROM rooms');
     const results = stmt.all();
-    
+
     const rooms: Record<string, IRoomEncryption> = {};
     for (const row of results) {
       rooms[row.room_id] = JSON.parse(row.config);
     }
-    
+
     func(rooms);
   }
-
-  // Add more method implementations as needed...
-} 
+}
