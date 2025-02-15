@@ -22,7 +22,7 @@ const start = async () => {
 
   client.once(sdk.ClientEvent.Sync, async (state, prevState, res) => {
     // state will be 'PREPARED' when the client is ready to use
-    console.log(state);
+    console.log("Sync state:", state);
   });
 
   const scriptStart = Date.now();
@@ -30,6 +30,16 @@ const start = async () => {
   client.on(
     sdk.RoomEvent.Timeline,
     async function (event, room, toStartOfTimeline) {
+      console.log(`Timeline event ${event.type} from ${event.sender} in room ${room.roomId}`);
+      console.log(`toStartOfTimeline: ${toStartOfTimeline}`);
+      const eventTime = event.event.origin_server_ts;
+
+      if (!eventTime || scriptStart > eventTime) {
+        return; //don't run commands for old messages
+      }
+
+      console.log(`Event time: ${eventTime} after script start: ${scriptStart}`);
+
       if (event.isEncrypted()) {
         try {
           const crypto = client.crypto;
@@ -42,12 +52,6 @@ const start = async () => {
           console.error("Failed to decrypt event:", err);
           return;
         }
-      }
-
-      const eventTime = event.event.origin_server_ts;
-
-      if (!eventTime || scriptStart > eventTime) {
-        return; //don't run commands for old messages
       }
 
       if (event.event.sender === userId) {
