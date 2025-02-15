@@ -1,7 +1,6 @@
 import * as sdk from "matrix-js-sdk";
 import * as path from "path";
 import * as fs from "fs";
-import { SQLiteCryptoStore } from "./SQLiteCryptoStore";
 import { ICrossSigningKey } from "matrix-js-sdk/lib/client";
 import { SecretStorePrivateKeys } from "matrix-js-sdk/lib/crypto/store/base";
 import { ICryptoCallbacks } from "matrix-js-sdk/lib/crypto";
@@ -12,24 +11,6 @@ if (!homeserver || !access_token || !userId) {
   throw new Error("Missing required environment variables");
 }
 
-// SQLite crypto store implementation (temporarily disabled)
-/*
-const dbDir = process.cwd();
-const dbPath = path.join(dbDir, 'crypto.db');
-
-console.log('Current working directory:', process.cwd());
-console.log('Database path:', dbPath);
-
-// Ensure the database directory exists
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-console.log(`Using SQLite database at: ${dbPath}`);
-const cryptoStore = new SQLiteCryptoStore(dbDir, true);
-*/
-
-// Temporarily using in-memory store
 const cryptoStore = new sdk.MemoryCryptoStore();
 
 export const client = sdk.createClient({
