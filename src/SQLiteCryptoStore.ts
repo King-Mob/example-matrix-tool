@@ -1,117 +1,95 @@
 import * as sdk from "matrix-js-sdk";
 import Database from "better-sqlite3";
-import { CryptoStore, Mode, ISessionInfo, IDeviceData, OutgoingRoomKeyRequest, ISession, IWithheld, ParkedSharedHistory } from "matrix-js-sdk/lib/crypto/store/base";
+import * as path from "path";
+import { CryptoStore, Mode, ISessionInfo, IDeviceData, OutgoingRoomKeyRequest, ISession, IWithheld, ParkedSharedHistory, SecretStorePrivateKeys } from "matrix-js-sdk/lib/crypto/store/base";
 import { InboundGroupSessionData } from "matrix-js-sdk/lib/crypto/OlmDevice";
 import { IRoomEncryption } from "matrix-js-sdk/lib/crypto/RoomList";
 import { ICrossSigningKey } from "matrix-js-sdk/lib/client";
-import { SecretStorePrivateKeys } from "matrix-js-sdk/lib/crypto/store/base";
 
-// SQLite-based crypto store implementation
+/**
+ * A crypto storage provider using SQLite for the Matrix JS SDK.
+ * Inspired by the RustSdkCryptoStorageProvider from matrix-bot-sdk.
+ */
 export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   private db: Database.Database;
+  private deviceId: string | null = null;
+  private roomConfigs: Record<string, any> = {};
 
-  constructor(dbPath: string) {
+  constructor(private readonly storagePath: string) {
     super();
+    // Ensure the directory exists
+    const dbPath = path.join(storagePath, 'crypto.db');
     this.db = new Database(dbPath);
     this.setupDatabase();
+    this.loadState();
   }
 
   private setupDatabase() {
-    // Create tables if they don't exist
     this.db.exec(`
-      -- Account data
-      CREATE TABLE IF NOT EXISTS account (
-        id INTEGER PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS rooms (
+        room_id TEXT PRIMARY KEY,
+        config TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS olm_sessions (
+        session_id TEXT PRIMARY KEY,
         pickle TEXT NOT NULL
       );
 
-      -- Cross signing keys
+      CREATE TABLE IF NOT EXISTS account (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        pickle TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS cross_signing_keys (
         key_id TEXT PRIMARY KEY,
-        key_data TEXT NOT NULL
+        key_data TEXT NOT NULL,
+        raw_key BLOB
       );
 
-      -- Secret store private keys
-      CREATE TABLE IF NOT EXISTS secret_store_private_keys (
-        key_type TEXT PRIMARY KEY,
-        key_data TEXT NOT NULL
-      );
-
-      -- End-to-end sessions
-      CREATE TABLE IF NOT EXISTS e2e_sessions (
-        device_key TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        session_data TEXT NOT NULL,
-        PRIMARY KEY (device_key, session_id)
-      );
-
-      -- Session problems
-      CREATE TABLE IF NOT EXISTS session_problems (
-        device_key TEXT NOT NULL,
-        problem_type TEXT NOT NULL,
-        fixed BOOLEAN NOT NULL,
-        timestamp INTEGER NOT NULL,
-        PRIMARY KEY (device_key, timestamp)
-      );
-
-      -- Inbound group sessions
-      CREATE TABLE IF NOT EXISTS inbound_group_sessions (
-        sender_key TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        session_data TEXT NOT NULL,
-        withheld_data TEXT,
-        PRIMARY KEY (sender_key, session_id)
-      );
-
-      -- Device data
-      CREATE TABLE IF NOT EXISTS device_data (
-        id INTEGER PRIMARY KEY,
-        data TEXT NOT NULL
-      );
-
-      -- Encrypted rooms
-      CREATE TABLE IF NOT EXISTS encrypted_rooms (
-        room_id TEXT PRIMARY KEY,
-        room_info TEXT NOT NULL
-      );
-
-      -- Outgoing key requests
-      CREATE TABLE IF NOT EXISTS outgoing_key_requests (
-        request_id TEXT PRIMARY KEY,
-        request_data TEXT NOT NULL
-      );
-
-      -- Shared history sessions
-      CREATE TABLE IF NOT EXISTS shared_history_sessions (
-        room_id TEXT NOT NULL,
-        sender_key TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        PRIMARY KEY (room_id, sender_key, session_id)
-      );
-
-      -- Parked shared history
-      CREATE TABLE IF NOT EXISTS parked_shared_history (
-        room_id TEXT NOT NULL,
-        data TEXT NOT NULL,
-        PRIMARY KEY (room_id)
-      );
-
-      -- Sessions needing backup
-      CREATE TABLE IF NOT EXISTS sessions_needing_backup (
-        sender_key TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        PRIMARY KEY (sender_key, session_id)
+      CREATE TABLE IF NOT EXISTS secret_store (
+        key_id TEXT PRIMARY KEY,
+        key_data BLOB NOT NULL
       );
     `);
   }
 
-  // Override necessary methods from MemoryCryptoStore
+  private loadState() {
+    // Load device ID
+    const deviceIdRow = this.db.prepare('SELECT value FROM state WHERE key = ?').get('device_id');
+    if (deviceIdRow) {
+      this.deviceId = deviceIdRow.value;
+    }
+
+    // Load rooms
+    const roomRows = this.db.prepare('SELECT room_id, config FROM rooms').all();
+    for (const row of roomRows) {
+      this.roomConfigs[row.room_id] = JSON.parse(row.config);
+    }
+  }
+
+  private saveState() {
+    const stmt = this.db.prepare('INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)');
+    if (this.deviceId) {
+      stmt.run('device_id', this.deviceId);
+    }
+
+    const roomStmt = this.db.prepare('INSERT OR REPLACE INTO rooms (room_id, config) VALUES (?, ?)');
+    for (const [roomId, config] of Object.entries(this.roomConfigs)) {
+      roomStmt.run(roomId, JSON.stringify(config));
+    }
+  }
+
   async doTxn<T>(
     mode: Mode,
     stores: Iterable<string>,
     func: (txn: unknown) => T
   ): Promise<T> {
-    // Start a transaction if in write mode
     if (mode === 'readwrite') {
       this.db.exec('BEGIN TRANSACTION');
     }
@@ -119,19 +97,48 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     try {
       const result = await func(this.db);
       
-      // Commit the transaction if in write mode
       if (mode === 'readwrite') {
+        this.saveState();
         this.db.exec('COMMIT');
       }
       
       return result;
     } catch (error) {
-      // Rollback the transaction if in write mode
       if (mode === 'readwrite') {
         this.db.exec('ROLLBACK');
       }
       throw error;
     }
+  }
+
+  // Device ID management
+  getDeviceId(txn: Database.Database, func: (deviceId: string | null) => void): void {
+    func(this.deviceId);
+  }
+
+  storeDeviceId(txn: Database.Database, deviceId: string): void {
+    this.deviceId = deviceId;
+  }
+
+  // Room management
+  getRoom(txn: Database.Database, roomId: string, func: (room: any | null) => void): void {
+    func(this.roomConfigs[roomId] || null);
+  }
+
+  storeRoom(txn: Database.Database, roomId: string, config: any): void {
+    this.roomConfigs[roomId] = config;
+  }
+
+  // Olm session management
+  storeOlmSession(txn: Database.Database, sessionId: string, pickle: string): void {
+    const stmt = txn.prepare('INSERT OR REPLACE INTO olm_sessions (session_id, pickle) VALUES (?, ?)');
+    stmt.run(sessionId, pickle);
+  }
+
+  getOlmSession(txn: Database.Database, sessionId: string, func: (pickle: string | null) => void): void {
+    const stmt = txn.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
+    const result = stmt.get(sessionId);
+    func(result ? result.pickle : null);
   }
 
   // Example implementation of a few key methods
@@ -153,7 +160,7 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
       func(null);
       return;
     }
-    const keys = {};
+    const keys: Record<string, ICrossSigningKey> = {};
     for (const row of rows) {
       keys[row.key_id] = JSON.parse(row.key_data);
     }
@@ -165,6 +172,49 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     for (const [keyId, keyData] of Object.entries(keys)) {
       stmt.run(keyId, JSON.stringify(keyData));
     }
+  }
+
+  // Additional methods for raw key data used by cryptoCallbacks
+  getRawCrossSigningKeys(txn: Database.Database, func: (keys: Record<string, Uint8Array> | null) => void): void {
+    const stmt = txn.prepare('SELECT key_id, raw_key FROM cross_signing_keys');
+    const rows = stmt.all();
+    if (rows.length === 0) {
+      func(null);
+      return;
+    }
+    const keys: Record<string, Uint8Array> = {};
+    for (const row of rows) {
+      if (row.raw_key) {
+        keys[row.key_id] = row.raw_key;
+      }
+    }
+    func(keys);
+  }
+
+  storeRawCrossSigningKeys(txn: Database.Database, keys: Record<string, Uint8Array>): void {
+    const stmt = txn.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, raw_key) VALUES (?, ?)');
+    for (const [keyId, keyData] of Object.entries(keys)) {
+      stmt.run(keyId, keyData);
+    }
+  }
+
+  getSecretStorePrivateKey<K extends keyof SecretStorePrivateKeys>(
+    txn: Database.Database,
+    func: (key: SecretStorePrivateKeys[K] | null) => void,
+    type: K
+  ): void {
+    const stmt = txn.prepare('SELECT key_data FROM secret_store WHERE key_id = ?');
+    const result = stmt.get(type);
+    func(result ? result.key_data : null);
+  }
+
+  storeSecretStorePrivateKey<K extends keyof SecretStorePrivateKeys>(
+    txn: Database.Database,
+    type: K,
+    key: SecretStorePrivateKeys[K]
+  ): void {
+    const stmt = txn.prepare('INSERT OR REPLACE INTO secret_store (key_id, key_data) VALUES (?, ?)');
+    stmt.run(type, key);
   }
 
   // Add more method implementations as needed...

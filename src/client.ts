@@ -1,6 +1,10 @@
 import * as sdk from "matrix-js-sdk";
 import * as path from "path";
+import * as fs from "fs";
 import { SQLiteCryptoStore } from "./SQLiteCryptoStore";
+import { ICrossSigningKey } from "matrix-js-sdk/lib/client";
+import { SecretStorePrivateKeys } from "matrix-js-sdk/lib/crypto/store/base";
+import { ICryptoCallbacks } from "matrix-js-sdk/lib/crypto";
 
 const { access_token, homeserver, userId } = process.env;
 
@@ -9,8 +13,21 @@ if (!homeserver || !access_token || !userId) {
 }
 
 // Create a SQLite crypto store in the project directory
-const dbPath = path.join(process.cwd(), 'crypto.db');
-const cryptoStore = new SQLiteCryptoStore(dbPath);
+const dbDir = process.cwd();
+const dbPath = path.join(dbDir, 'crypto.db');
+
+console.log('Current working directory:', process.cwd());
+console.log('Database directory:', dbDir);
+console.log('Database directory exists:', fs.existsSync(dbDir));
+console.log('Database path:', dbPath);
+
+// Ensure the database directory exists
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+console.log(`Using SQLite database at: ${dbPath}`);
+const cryptoStore = new SQLiteCryptoStore(dbDir);
 
 export const client = sdk.createClient({
   baseUrl: homeserver,
@@ -21,9 +38,33 @@ export const client = sdk.createClient({
   useAuthorizationHeader: true,
   verificationMethods: [],
   cryptoCallbacks: {
-    getCrossSigningKey: async () => null,
-    saveCrossSigningKeys: async () => {},
-    getSecretStorageKey: async () => null,
-    cacheSecretStorageKey: async () => {},
+    getCrossSigningKey: async () => {
+      let result = null;
+      await cryptoStore.doTxn('readonly', ['crossSigningKeys'], (txn) => {
+        (cryptoStore as any).getRawCrossSigningKeys(txn, (keys) => {
+          result = keys;
+        });
+      });
+      return result;
+    },
+    saveCrossSigningKeys: (keys) => {
+      return cryptoStore.doTxn('readwrite', ['crossSigningKeys'], (txn) => {
+        (cryptoStore as any).storeRawCrossSigningKeys(txn, keys);
+      });
+    },
+    getSecretStorageKey: async (keys, name) => {
+      let result = null;
+      await cryptoStore.doTxn('readonly', ['secretStore'], (txn) => {
+        cryptoStore.getSecretStorePrivateKey(txn, (key) => {
+          result = key;
+        }, name as any);
+      });
+      return result ? [name, result] : null;
+    },
+    cacheSecretStorageKey: async (name, key) => {
+      await cryptoStore.doTxn('readwrite', ['secretStore'], (txn) => {
+        cryptoStore.storeSecretStorePrivateKey(txn, name as any, key);
+      });
+    },
   },
 });
