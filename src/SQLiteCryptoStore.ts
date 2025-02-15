@@ -112,49 +112,49 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   }
 
   // Device ID management
-  getDeviceId(txn: Database.Database, func: (deviceId: string | null) => void): void {
+  getDeviceId(db: Database.Database, func: (deviceId: string | null) => void): void {
     func(this.deviceId);
   }
 
-  storeDeviceId(txn: Database.Database, deviceId: string): void {
+  storeDeviceId(db: Database.Database, deviceId: string): void {
     this.deviceId = deviceId;
   }
 
   // Room management
-  getRoom(txn: Database.Database, roomId: string, func: (room: any | null) => void): void {
+  getRoom(db: Database.Database, roomId: string, func: (room: any | null) => void): void {
     func(this.roomConfigs[roomId] || null);
   }
 
-  storeRoom(txn: Database.Database, roomId: string, config: any): void {
+  storeRoom(db: Database.Database, roomId: string, config: any): void {
     this.roomConfigs[roomId] = config;
   }
 
   // Olm session management
-  storeOlmSession(txn: Database.Database, sessionId: string, pickle: string): void {
-    const stmt = txn.prepare('INSERT OR REPLACE INTO olm_sessions (session_id, pickle) VALUES (?, ?)');
+  storeOlmSession(db: Database.Database, sessionId: string, pickle: string): void {
+    const stmt = db.prepare('INSERT OR REPLACE INTO olm_sessions (session_id, pickle) VALUES (?, ?)');
     stmt.run(sessionId, pickle);
   }
 
-  getOlmSession(txn: Database.Database, sessionId: string, func: (pickle: string | null) => void): void {
-    const stmt = txn.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
+  getOlmSession(db: Database.Database, sessionId: string, func: (pickle: string | null) => void): void {
+    const stmt = db.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
     const result = stmt.get(sessionId);
     func(result ? result.pickle : null);
   }
 
   // Example implementation of a few key methods
-  getAccount(txn: Database.Database, func: (accountPickle: string | null) => void): void {
-    const stmt = txn.prepare('SELECT pickle FROM account LIMIT 1');
+  getAccount(db: Database.Database, func: (accountPickle: string | null) => void): void {
+    const stmt = db.prepare('SELECT pickle FROM account LIMIT 1');
     const result = stmt.get();
     func(result ? result.pickle : null);
   }
 
-  storeAccount(txn: Database.Database, accountPickle: string): void {
-    const stmt = txn.prepare('INSERT OR REPLACE INTO account (id, pickle) VALUES (1, ?)');
+  storeAccount(db: Database.Database, accountPickle: string): void {
+    const stmt = db.prepare('INSERT OR REPLACE INTO account (id, pickle) VALUES (1, ?)');
     stmt.run(accountPickle);
   }
 
-  getCrossSigningKeys(txn: Database.Database, func: (keys: Record<string, ICrossSigningKey> | null) => void): void {
-    const stmt = txn.prepare('SELECT key_id, key_data FROM cross_signing_keys');
+  getCrossSigningKeys(db: Database.Database, func: (keys: Record<string, ICrossSigningKey> | null) => void): void {
+    const stmt = db.prepare('SELECT key_id, key_data FROM cross_signing_keys');
     const rows = stmt.all();
     if (rows.length === 0) {
       func(null);
@@ -167,16 +167,16 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     func(keys);
   }
 
-  storeCrossSigningKeys(txn: Database.Database, keys: Record<string, ICrossSigningKey>): void {
-    const stmt = txn.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, key_data) VALUES (?, ?)');
+  storeCrossSigningKeys(db: Database.Database, keys: Record<string, ICrossSigningKey>): void {
+    const stmt = db.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, key_data) VALUES (?, ?)');
     for (const [keyId, keyData] of Object.entries(keys)) {
       stmt.run(keyId, JSON.stringify(keyData));
     }
   }
 
   // Additional methods for raw key data used by cryptoCallbacks
-  getRawCrossSigningKeys(txn: Database.Database, func: (keys: Record<string, Uint8Array> | null) => void): void {
-    const stmt = txn.prepare('SELECT key_id, raw_key FROM cross_signing_keys');
+  getRawCrossSigningKeys(db: Database.Database, func: (keys: Record<string, Uint8Array> | null) => void): void {
+    const stmt = db.prepare('SELECT key_id, raw_key FROM cross_signing_keys');
     const rows = stmt.all();
     if (rows.length === 0) {
       func(null);
@@ -191,29 +191,29 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
     func(keys);
   }
 
-  storeRawCrossSigningKeys(txn: Database.Database, keys: Record<string, Uint8Array>): void {
-    const stmt = txn.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, raw_key) VALUES (?, ?)');
+  storeRawCrossSigningKeys(db: Database.Database, keys: Record<string, Uint8Array>): void {
+    const stmt = db.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, raw_key) VALUES (?, ?)');
     for (const [keyId, keyData] of Object.entries(keys)) {
       stmt.run(keyId, keyData);
     }
   }
 
   getSecretStorePrivateKey<K extends keyof SecretStorePrivateKeys>(
-    txn: Database.Database,
+    db: Database.Database,
     func: (key: SecretStorePrivateKeys[K] | null) => void,
     type: K
   ): void {
-    const stmt = txn.prepare('SELECT key_data FROM secret_store WHERE key_id = ?');
+    const stmt = db.prepare('SELECT key_data FROM secret_store WHERE key_id = ?');
     const result = stmt.get(type);
     func(result ? result.key_data : null);
   }
 
   storeSecretStorePrivateKey<K extends keyof SecretStorePrivateKeys>(
-    txn: Database.Database,
+    db: Database.Database,
     type: K,
     key: SecretStorePrivateKeys[K]
   ): void {
-    const stmt = txn.prepare('INSERT OR REPLACE INTO secret_store (key_id, key_data) VALUES (?, ?)');
+    const stmt = db.prepare('INSERT OR REPLACE INTO secret_store (key_id, key_data) VALUES (?, ?)');
     stmt.run(type, key);
   }
 
