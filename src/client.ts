@@ -12,7 +12,8 @@ if (!homeserver || !access_token || !userId) {
   throw new Error("Missing required environment variables");
 }
 
-// Create a SQLite crypto store in the project directory
+// SQLite crypto store implementation (temporarily disabled)
+/*
 const dbDir = process.cwd();
 const dbPath = path.join(dbDir, 'crypto.db');
 
@@ -26,6 +27,10 @@ if (!fs.existsSync(dbDir)) {
 
 console.log(`Using SQLite database at: ${dbPath}`);
 const cryptoStore = new SQLiteCryptoStore(dbDir, true);
+*/
+
+// Temporarily using in-memory store
+const cryptoStore = new sdk.MemoryCryptoStore();
 
 export const client = sdk.createClient({
   baseUrl: homeserver,
