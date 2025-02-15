@@ -17,8 +17,6 @@ const dbDir = process.cwd();
 const dbPath = path.join(dbDir, 'crypto.db');
 
 console.log('Current working directory:', process.cwd());
-console.log('Database directory:', dbDir);
-console.log('Database directory exists:', fs.existsSync(dbDir));
 console.log('Database path:', dbPath);
 
 // Ensure the database directory exists

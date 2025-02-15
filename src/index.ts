@@ -18,7 +18,7 @@ const start = async () => {
   global.Olm = Olm;
 
   await client.initCrypto();
-  await client.startClient();
+  await client.startClient({initialSyncLimit: 0, includeArchivedRooms: false});
 
   client.once(sdk.ClientEvent.Sync, async (state, prevState, res) => {
     // state will be 'PREPARED' when the client is ready to use
