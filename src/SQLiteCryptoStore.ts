@@ -56,6 +56,14 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
         key_id TEXT PRIMARY KEY,
         key_data BLOB NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS inbound_group_sessions (
+        room_id TEXT,
+        sender_key TEXT,
+        session_id TEXT,
+        session_data TEXT NOT NULL,
+        PRIMARY KEY (room_id, sender_key, session_id)
+      );
     `);
   }
 
@@ -215,6 +223,30 @@ export class SQLiteCryptoStore extends sdk.MemoryCryptoStore {
   ): void {
     const stmt = db.prepare('INSERT OR REPLACE INTO secret_store (key_id, key_data) VALUES (?, ?)');
     stmt.run(type, key);
+  }
+
+  // Add these new methods for inbound group sessions
+  storeInboundGroupSession(db: Database.Database, roomId: string, senderKey: string, sessionId: string, sessionData: InboundGroupSessionData): void {
+    const stmt = db.prepare('INSERT OR REPLACE INTO inbound_group_sessions (room_id, sender_key, session_id, session_data) VALUES (?, ?, ?, ?)');
+    stmt.run(roomId, senderKey, sessionId, JSON.stringify(sessionData));
+  }
+
+  getInboundGroupSession(db: Database.Database, roomId: string, senderKey: string, sessionId: string, func: (session: InboundGroupSessionData | null) => void): void {
+    const stmt = db.prepare('SELECT session_data FROM inbound_group_sessions WHERE room_id = ? AND sender_key = ? AND session_id = ?');
+    const result = stmt.get(roomId, senderKey, sessionId);
+    func(result ? JSON.parse(result.session_data) : null);
+  }
+
+  getInboundGroupSessions(db: Database.Database, func: (sessions: [roomId: string, senderKey: string, sessionId: string, sessionData: InboundGroupSessionData][]) => void): void {
+    const stmt = db.prepare('SELECT room_id, sender_key, session_id, session_data FROM inbound_group_sessions');
+    const rows = stmt.all();
+    const sessions = rows.map(row => [
+      row.room_id,
+      row.sender_key,
+      row.session_id,
+      JSON.parse(row.session_data)
+    ]);
+    func(sessions);
   }
 
   // Add more method implementations as needed...
