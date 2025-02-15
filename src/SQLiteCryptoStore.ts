@@ -8,6 +8,125 @@ import { ICrossSigningKey } from "matrix-js-sdk/lib/client";
 import { IRoomKeyRequestBody } from "matrix-js-sdk/lib/crypto";
 import { IOlmDevice } from "matrix-js-sdk/lib/crypto/algorithms/megolm";
 
+interface StateRow {
+  value: string;
+}
+
+interface RoomRow {
+  room_id: string;
+  config: string;
+}
+
+interface OlmSessionRow {
+  pickle: string;
+}
+
+interface AccountRow {
+  pickle: string;
+}
+
+interface CrossSigningKeyRow {
+  key_id: string;
+  key_data: string;
+  raw_key: Buffer | null;
+}
+
+interface InboundGroupSessionRow {
+  room_id: string;
+  sender_key: string;
+  session_id: string;
+  session_data: string;
+}
+
+interface SessionProblemRow {
+  device_key: string;
+  type: string;
+  fixed: number;
+  time: number;
+}
+
+interface DeviceDataRow {
+  user_id: string;
+  device_id: string;
+  device_info: string;
+}
+
+interface SyncTokenRow {
+  token: string | null;
+}
+
+interface OutgoingRoomKeyRequestRow {
+  request_id: string;
+  request_txn_id: string | null;
+  cancellation_txn_id: string | null;
+  request_body: string;
+  state: number;
+  recipients: string;
+}
+
+interface SessionsNeedingBackupRow {
+  room_id: string;
+  sender_key: string;
+  session_id: string;
+  session_data: string;
+}
+
+interface RoomKeyRecipient {
+  userId: string;
+  deviceId: string;
+}
+
+interface CrossSigningKeyWithRawRow {
+  key_id: string;
+  raw_key: Buffer | null;
+}
+
+interface SecretStoreRow {
+  key_data: Buffer;
+}
+
+interface CountRow {
+  count: number;
+}
+
+interface OlmSessionWithIdRow {
+  session_id: string;
+  pickle: string;
+}
+
+interface UserTrackingRow {
+  user_id: string;
+  tracking_status: string;
+}
+
+interface UserCrossSigningRow {
+  user_id: string;
+  cross_signing_info: string;
+}
+
+interface ParkedSharedHistoryRow {
+  sender_id: string;
+  sender_key: string;
+  session_id: string;
+  session_key: string;
+  keys_claimed: string;
+  forwarding_curve25519_key_chain: string;
+}
+
+interface SharedHistoryRow {
+  sender_key: string;
+  session_id: string;
+}
+
+interface GetOrAddOutgoingRoomKeyRequestRow {
+  request_id: string;
+  request_txn_id: string | null;
+  cancellation_txn_id: string | null;
+  recipients: string;
+  request_body: string;
+  state: number;
+}
+
 /**
  * A crypto storage provider using SQLite for the Matrix JS SDK.
  * Implements direct database storage without in-memory caching.
@@ -193,7 +312,7 @@ export class SQLiteCryptoStore implements CryptoStore {
   getDeviceId(_txn: unknown, func: (deviceId: string | null) => void): void {
     console.log('Getting device ID');
     const stmt = this.db.prepare('SELECT value FROM state WHERE key = ?');
-    const result = stmt.get('device_id');
+    const result = stmt.get('device_id') as StateRow | undefined;
     func(result ? result.value : null);
   }
 
@@ -204,13 +323,13 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   // Room management
-  getRoom(_txn: unknown, roomId: string, func: (room: any | null) => void): void {
+  getRoom(_txn: unknown, roomId: string, func: (room: IRoomEncryption | null) => void): void {
     const stmt = this.db.prepare('SELECT config FROM rooms WHERE room_id = ?');
-    const result = stmt.get(roomId);
+    const result = stmt.get(roomId) as RoomRow | undefined;
     func(result ? JSON.parse(result.config) : null);
   }
 
-  storeRoom(_txn: unknown, roomId: string, config: any): void {
+  storeRoom(_txn: unknown, roomId: string, config: IRoomEncryption): void {
     const stmt = this.db.prepare('INSERT OR REPLACE INTO rooms (room_id, config) VALUES (?, ?)');
     stmt.run(roomId, JSON.stringify(config));
   }
@@ -223,14 +342,14 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   getOlmSession(_txn: unknown, sessionId: string, func: (pickle: string | null) => void): void {
     const stmt = this.db.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
-    const result = stmt.get(sessionId);
+    const result = stmt.get(sessionId) as OlmSessionRow | undefined;
     func(result ? result.pickle : null);
   }
 
   // Example implementation of a few key methods
   getAccount(_txn: unknown, func: (accountPickle: string | null) => void): void {
     const stmt = this.db.prepare('SELECT pickle FROM account LIMIT 1');
-    const result = stmt.get();
+    const result = stmt.get() as AccountRow | undefined;
     func(result ? result.pickle : null);
   }
 
@@ -241,7 +360,7 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   getCrossSigningKeys(_txn: unknown, func: (keys: Record<string, ICrossSigningKey> | null) => void): void {
     const stmt = this.db.prepare('SELECT key_id, key_data FROM cross_signing_keys');
-    const rows = stmt.all();
+    const rows = stmt.all() as CrossSigningKeyRow[];
     if (rows.length === 0) {
       func(null);
       return;
@@ -263,7 +382,7 @@ export class SQLiteCryptoStore implements CryptoStore {
   // Additional methods for raw key data used by cryptoCallbacks
   getRawCrossSigningKeys(_txn: unknown, func: (keys: Record<string, Uint8Array> | null) => void): void {
     const stmt = this.db.prepare('SELECT key_id, raw_key FROM cross_signing_keys');
-    const rows = stmt.all();
+    const rows = stmt.all() as CrossSigningKeyWithRawRow[];
     if (rows.length === 0) {
       func(null);
       return;
@@ -291,8 +410,9 @@ export class SQLiteCryptoStore implements CryptoStore {
   ): void {
     console.log('Getting secret store private key:', type);
     const stmt = this.db.prepare('SELECT key_data FROM secret_store WHERE key_id = ?');
-    const result = stmt.get(type);
-    func(result ? result.key_data : null);
+    const result = stmt.get(type) as SecretStoreRow | undefined;
+    // First convert to unknown, then to the expected type to avoid direct Buffer conversion
+    func(result ? (JSON.parse(result.key_data.toString()) as SecretStorePrivateKeys[K]) : null);
   }
 
   storeSecretStorePrivateKey<K extends keyof SecretStorePrivateKeys>(
@@ -327,7 +447,7 @@ export class SQLiteCryptoStore implements CryptoStore {
   ): void {
     console.log(`Getting inbound group session - Sender: ${senderCurve25519Key}, Session: ${sessionId}`);
     const stmt = this.db.prepare('SELECT session_data FROM inbound_group_sessions WHERE sender_key = ? AND session_id = ?');
-    const result = stmt.get(senderCurve25519Key, sessionId);
+    const result = stmt.get(senderCurve25519Key, sessionId) as InboundGroupSessionRow | undefined;
     if (result) {
       console.log('Found session in database');
     } else {
@@ -342,7 +462,7 @@ export class SQLiteCryptoStore implements CryptoStore {
   ): void {
     console.log('Getting all inbound group sessions');
     const stmt = this.db.prepare('SELECT room_id, sender_key, session_id, session_data FROM inbound_group_sessions');
-    const rows = stmt.all();
+    const rows = stmt.all() as InboundGroupSessionRow[];
     console.log(`Found ${rows.length} sessions in database`);
 
     // Call the callback for each session individually
@@ -358,11 +478,10 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   // Outgoing room key request management
   async getOrAddOutgoingRoomKeyRequest(request: OutgoingRoomKeyRequest): Promise<OutgoingRoomKeyRequest> {
-    // First check if we already have this request
     const stmt = this.db.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_id = ?'
     );
-    const result = stmt.get(request.requestId);
+    const result = stmt.get(request.requestId) as GetOrAddOutgoingRoomKeyRequestRow | undefined;
 
     if (result) {
       return {
@@ -393,85 +512,53 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   async getOutgoingRoomKeyRequest(requestBody: IRoomKeyRequestBody): Promise<OutgoingRoomKeyRequest | null> {
     const stmt = this.db.prepare(
-      'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_body = ?'
+      'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE request_body = ?'
     );
-    const result = stmt.get(JSON.stringify(requestBody));
-
+    const result = stmt.get(JSON.stringify(requestBody)) as OutgoingRoomKeyRequestRow | undefined;
     if (!result) return null;
 
     return {
       requestId: result.request_id,
       requestTxnId: result.request_txn_id,
       cancellationTxnId: result.cancellation_txn_id,
-      recipients: JSON.parse(result.recipients),
       requestBody: JSON.parse(result.request_body),
       state: result.state,
+      recipients: JSON.parse(result.recipients)
     };
   }
 
   async getOutgoingRoomKeyRequestByState(wantedStates: number[]): Promise<OutgoingRoomKeyRequest | null> {
-    const placeholders = wantedStates.map(() => '?').join(',');
     const stmt = this.db.prepare(
-      `SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state
-       FROM outgoing_room_key_requests
-       WHERE state IN (${placeholders})
-       LIMIT 1`
+      'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE state IN (' +
+      wantedStates.map(() => '?').join(',') +
+      ') LIMIT 1'
     );
-    const result = stmt.get(...wantedStates);
-
+    const result = stmt.get(...wantedStates) as OutgoingRoomKeyRequestRow | undefined;
     if (!result) return null;
 
     return {
       requestId: result.request_id,
       requestTxnId: result.request_txn_id,
       cancellationTxnId: result.cancellation_txn_id,
-      recipients: JSON.parse(result.recipients),
       requestBody: JSON.parse(result.request_body),
       state: result.state,
+      recipients: JSON.parse(result.recipients)
     };
   }
 
   async getAllOutgoingRoomKeyRequestsByState(wantedState: number): Promise<OutgoingRoomKeyRequest[]> {
     const stmt = this.db.prepare(
-      'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE state = ?'
+      'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE state = ?'
     );
-    const results = stmt.all(wantedState);
+    const results = stmt.all(wantedState) as OutgoingRoomKeyRequestRow[];
 
-    return results.map(result => ({
-      requestId: result.request_id,
-      requestTxnId: result.request_txn_id,
-      cancellationTxnId: result.cancellation_txn_id,
-      recipients: JSON.parse(result.recipients),
-      requestBody: JSON.parse(result.request_body),
-      state: result.state,
-    }));
-  }
-
-  async getOutgoingRoomKeyRequestsByTarget(
-    userId: string,
-    deviceId: string,
-    wantedStates: number[]
-  ): Promise<OutgoingRoomKeyRequest[]> {
-    const placeholders = wantedStates.map(() => '?').join(',');
-    const stmt = this.db.prepare(
-      `SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state
-       FROM outgoing_room_key_requests
-       WHERE state IN (${placeholders})
-       AND recipients LIKE ?`
-    );
-
-    // Search for recipients that include this user/device combination
-    // Note: This is a bit of a hack since we're searching JSON as text
-    const targetPattern = `%"userId":"${userId}"%"deviceId":"${deviceId}"%`;
-    const results = stmt.all(...wantedStates, targetPattern);
-
-    return results.map(result => ({
-      requestId: result.request_id,
-      requestTxnId: result.request_txn_id,
-      cancellationTxnId: result.cancellation_txn_id,
-      recipients: JSON.parse(result.recipients),
-      requestBody: JSON.parse(result.request_body),
-      state: result.state,
+    return results.map(row => ({
+      requestId: row.request_id,
+      requestTxnId: row.request_txn_id,
+      cancellationTxnId: row.cancellation_txn_id,
+      requestBody: JSON.parse(row.request_body),
+      state: row.state,
+      recipients: JSON.parse(row.recipients) as RoomKeyRecipient[]
     }));
   }
 
@@ -480,64 +567,59 @@ export class SQLiteCryptoStore implements CryptoStore {
     expectedState: number,
     updates: Partial<OutgoingRoomKeyRequest>
   ): Promise<OutgoingRoomKeyRequest | null> {
-    // First get the current state
     const stmt = this.db.prepare(
-      'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
+      'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
     );
-    const current = stmt.get(requestId, expectedState);
+    const result = stmt.get(requestId, expectedState) as OutgoingRoomKeyRequestRow | undefined;
+    if (!result) return null;
 
-    if (!current) return null;
+    const updateData: Partial<OutgoingRoomKeyRequestRow> = {};
+    if (updates.requestTxnId !== undefined) updateData.request_txn_id = updates.requestTxnId;
+    if (updates.cancellationTxnId !== undefined) updateData.cancellation_txn_id = updates.cancellationTxnId;
+    if (updates.state !== undefined) updateData.state = updates.state;
 
-    // Merge current with updates
-    const updated = {
-      requestId: current.request_id,
-      requestTxnId: updates.requestTxnId ?? current.request_txn_id,
-      cancellationTxnId: updates.cancellationTxnId ?? current.cancellation_txn_id,
-      recipients: updates.recipients ?? JSON.parse(current.recipients),
-      requestBody: updates.requestBody ?? JSON.parse(current.request_body),
-      state: updates.state ?? current.state,
+    if (Object.keys(updateData).length > 0) {
+      const updateStmt = this.db.prepare(
+        'UPDATE outgoing_room_key_requests SET ' +
+        Object.keys(updateData)
+          .map(key => `${key} = ?`)
+          .join(', ') +
+        ' WHERE request_id = ?'
+      );
+
+      updateStmt.run(...Object.values(updateData), requestId);
+    }
+
+    return {
+      requestId: result.request_id,
+      requestTxnId: updates.requestTxnId ?? result.request_txn_id,
+      cancellationTxnId: updates.cancellationTxnId ?? result.cancellation_txn_id,
+      requestBody: JSON.parse(result.request_body),
+      state: updates.state ?? result.state,
+      recipients: JSON.parse(result.recipients) as RoomKeyRecipient[]
     };
-
-    // Update the record
-    const updateStmt = this.db.prepare(
-      'UPDATE outgoing_room_key_requests SET request_txn_id = ?, cancellation_txn_id = ?, recipients = ?, request_body = ?, state = ? WHERE request_id = ?'
-    );
-    updateStmt.run(
-      updated.requestTxnId,
-      updated.cancellationTxnId,
-      JSON.stringify(updated.recipients),
-      JSON.stringify(updated.requestBody),
-      updated.state,
-      requestId
-    );
-
-    return updated;
   }
 
   async deleteOutgoingRoomKeyRequest(
     requestId: string,
     expectedState: number
   ): Promise<OutgoingRoomKeyRequest | null> {
-    // First get the current state
     const stmt = this.db.prepare(
-      'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
+      'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
     );
-    const current = stmt.get(requestId, expectedState);
+    const result = stmt.get(requestId, expectedState) as OutgoingRoomKeyRequestRow | undefined;
+    if (!result) return null;
 
-    if (!current) return null;
-
-    // Delete the record
     const deleteStmt = this.db.prepare('DELETE FROM outgoing_room_key_requests WHERE request_id = ?');
     deleteStmt.run(requestId);
 
-    // Return the deleted record
     return {
-      requestId: current.request_id,
-      requestTxnId: current.request_txn_id,
-      cancellationTxnId: current.cancellation_txn_id,
-      recipients: JSON.parse(current.recipients),
-      requestBody: JSON.parse(current.request_body),
-      state: current.state,
+      requestId: result.request_id,
+      requestTxnId: result.request_txn_id,
+      cancellationTxnId: result.cancellation_txn_id,
+      requestBody: JSON.parse(result.request_body),
+      state: result.state,
+      recipients: JSON.parse(result.recipients) as RoomKeyRecipient[]
     };
   }
 
@@ -550,7 +632,6 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   async getEndToEndSessionProblem(deviceKey: string, timestamp: number): Promise<IProblem | null> {
-    // Get the most recent problem for this device that occurred before the given timestamp
     const stmt = this.db.prepare(
       `SELECT type, fixed, time
        FROM session_problems
@@ -558,27 +639,25 @@ export class SQLiteCryptoStore implements CryptoStore {
        ORDER BY time DESC
        LIMIT 1`
     );
-    const result = stmt.get(deviceKey, timestamp);
+    const result = stmt.get(deviceKey, timestamp) as SessionProblemRow | undefined;
 
     if (!result) return null;
 
     return {
       type: result.type,
-      fixed: Boolean(result.fixed), // Convert from SQLite INTEGER to boolean
+      fixed: Boolean(result.fixed),
       time: result.time,
     };
   }
 
   async filterOutNotifiedErrorDevices(devices: IOlmDevice[]): Promise<IOlmDevice[]> {
-    // Get all devices that have had problems marked as fixed
     const stmt = this.db.prepare(
       `SELECT DISTINCT device_key
        FROM session_problems
        WHERE fixed = true`
     );
-    const fixedDevices = new Set(stmt.all().map(row => row.device_key));
+    const fixedDevices = new Set(stmt.all().map((row: { device_key: string }) => row.device_key));
 
-    // Filter out devices that have had their problems marked as fixed
     return devices.filter(device => !fixedDevices.has(device.userId + ":" + device.deviceInfo.deviceId));
   }
 
@@ -594,7 +673,7 @@ export class SQLiteCryptoStore implements CryptoStore {
        WHERE s.needs_backup = true
        LIMIT ?`
     );
-    const results = stmt.all(limit);
+    const results = stmt.all(limit) as SessionsNeedingBackupRow[];
 
     return results.map(row => ({
       senderKey: row.sender_key,
@@ -607,7 +686,7 @@ export class SQLiteCryptoStore implements CryptoStore {
     const stmt = this.db.prepare(
       'SELECT COUNT(*) as count FROM sessions_needing_backup WHERE needs_backup = true'
     );
-    const result = stmt.get();
+    const result = stmt.get() as CountRow;
     return result.count;
   }
 
@@ -666,7 +745,7 @@ export class SQLiteCryptoStore implements CryptoStore {
     const stmt = this.db.prepare(
       'SELECT sender_key, session_id FROM shared_history_inbound_sessions WHERE room_id = ?'
     );
-    const results = stmt.all(roomId);
+    const results = stmt.all(roomId) as SharedHistoryRow[];
 
     return results.map(row => [row.sender_key, row.session_id]);
   }
@@ -697,23 +776,20 @@ export class SQLiteCryptoStore implements CryptoStore {
     roomId: string,
     _txn?: unknown
   ): Promise<ParkedSharedHistory[]> {
-    // First get all parked history for this room
     const selectStmt = this.db.prepare(
       `SELECT sender_id, sender_key, session_id, session_key, keys_claimed, forwarding_curve25519_key_chain
        FROM parked_shared_history
        WHERE room_id = ?`
     );
-    const results = selectStmt.all(roomId);
+    const results = selectStmt.all(roomId) as ParkedSharedHistoryRow[];
 
     if (results.length === 0) {
       return [];
     }
 
-    // Delete the records we're about to return
     const deleteStmt = this.db.prepare('DELETE FROM parked_shared_history WHERE room_id = ?');
     deleteStmt.run(roomId);
 
-    // Return the found records
     return results.map(row => ({
       senderId: row.sender_id,
       senderKey: row.sender_key,
@@ -726,7 +802,6 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   // Device data management
   getEndToEndDeviceData(_txn: unknown, func: (deviceData: IDeviceData | null) => void): void {
-    // Get all device data in one go
     const deviceStmt = this.db.prepare('SELECT user_id, device_id, device_info FROM device_data');
     const trackingStmt = this.db.prepare('SELECT user_id, tracking_status FROM user_tracking_status');
     const crossSigningStmt = this.db.prepare('SELECT user_id, cross_signing_info FROM user_cross_signing_info');
@@ -736,26 +811,22 @@ export class SQLiteCryptoStore implements CryptoStore {
     const trackingStatus: { [userId: string]: any } = {};
     let crossSigningInfo: Record<string, any> = {};
 
-    // Build devices map
-    for (const row of deviceStmt.all()) {
+    for (const row of deviceStmt.all() as DeviceDataRow[]) {
       if (!devices[row.user_id]) {
         devices[row.user_id] = {};
       }
       devices[row.user_id][row.device_id] = JSON.parse(row.device_info);
     }
 
-    // Build tracking status map
-    for (const row of trackingStmt.all()) {
+    for (const row of trackingStmt.all() as UserTrackingRow[]) {
       trackingStatus[row.user_id] = row.tracking_status;
     }
 
-    // Get cross signing info
-    for (const row of crossSigningStmt.all()) {
+    for (const row of crossSigningStmt.all() as UserCrossSigningRow[]) {
       crossSigningInfo[row.user_id] = JSON.parse(row.cross_signing_info);
     }
 
-    // Get sync token
-    const syncTokenRow = syncTokenStmt.get();
+    const syncTokenRow = syncTokenStmt.get() as SyncTokenRow | undefined;
     const syncToken = syncTokenRow ? syncTokenRow.token : null;
 
     func({
@@ -817,7 +888,7 @@ export class SQLiteCryptoStore implements CryptoStore {
   // Session counting and management
   countEndToEndSessions(_txn: unknown, func: (count: number) => void): void {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM olm_sessions');
-    const result = stmt.get();
+    const result = stmt.get() as CountRow;
     func(result.count);
   }
 
@@ -828,7 +899,7 @@ export class SQLiteCryptoStore implements CryptoStore {
     func: (session: ISessionInfo | null) => void
   ): void {
     const stmt = this.db.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
-    const result = stmt.get(sessionId);
+    const result = stmt.get(sessionId) as OlmSessionRow | undefined;
 
     if (!result) {
       func(null);
@@ -848,7 +919,7 @@ export class SQLiteCryptoStore implements CryptoStore {
     func: (sessions: { [sessionId: string]: ISessionInfo }) => void
   ): void {
     const stmt = this.db.prepare('SELECT session_id, pickle FROM olm_sessions');
-    const results = stmt.all();
+    const results = stmt.all() as OlmSessionWithIdRow[];
 
     const sessions: { [sessionId: string]: ISessionInfo } = {};
     for (const row of results) {
@@ -867,7 +938,7 @@ export class SQLiteCryptoStore implements CryptoStore {
     func: (session: ISessionInfo) => void
   ): void {
     const stmt = this.db.prepare('SELECT session_id, pickle FROM olm_sessions');
-    const results = stmt.all();
+    const results = stmt.all() as OlmSessionWithIdRow[];
 
     for (const row of results) {
       func({
@@ -928,7 +999,7 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   getEndToEndRooms(_txn: unknown, func: (rooms: Record<string, IRoomEncryption>) => void): void {
     const stmt = this.db.prepare('SELECT room_id, config FROM rooms');
-    const results = stmt.all();
+    const results = stmt.all() as RoomRow[];
 
     const rooms: Record<string, IRoomEncryption> = {};
     for (const row of results) {
@@ -936,5 +1007,32 @@ export class SQLiteCryptoStore implements CryptoStore {
     }
 
     func(rooms);
+  }
+
+  async getOutgoingRoomKeyRequestsByTarget(
+    userId: string,
+    deviceId: string,
+    wantedStates: number[]
+  ): Promise<OutgoingRoomKeyRequest[]> {
+    const stmt = this.db.prepare(
+      'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE state IN (' +
+      wantedStates.map(() => '?').join(',') +
+      ')'
+    );
+    const results = stmt.all(...wantedStates) as OutgoingRoomKeyRequestRow[];
+
+    return results
+      .filter(row => {
+        const recipients = JSON.parse(row.recipients) as RoomKeyRecipient[];
+        return recipients.some(r => r.userId === userId && r.deviceId === deviceId);
+      })
+      .map(row => ({
+        requestId: row.request_id,
+        requestTxnId: row.request_txn_id,
+        cancellationTxnId: row.cancellation_txn_id,
+        requestBody: JSON.parse(row.request_body),
+        state: row.state,
+        recipients: JSON.parse(row.recipients) as RoomKeyRecipient[]
+      }));
   }
 }

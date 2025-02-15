@@ -20,6 +20,7 @@
     "uuid": "^11.0.5"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.7.4",
     "tsx": "^4.19.2"
   }
