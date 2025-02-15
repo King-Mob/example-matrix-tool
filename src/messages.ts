@@ -83,6 +83,7 @@ const handleReply = async (event) => {
 };
 
 const handleMessage = async (event) => {
+  console.log(`handling message in room ${event.event.room_id}`, event);
   const message = event.event.content.body.toLowerCase();
   const { room_id } = event.event;
 

@@ -22,6 +22,7 @@ const start = async () => {
 
   client.once(sdk.ClientEvent.Sync, async (state, prevState, res) => {
     // state will be 'PREPARED' when the client is ready to use
+    console.log('--------------------------------');
     console.log("Sync state:", state);
   });
 
@@ -30,6 +31,7 @@ const start = async () => {
   client.on(
     sdk.RoomEvent.Timeline,
     async function (event, room, toStartOfTimeline) {
+      console.log('--------------------------------');
       console.log(`Timeline event ${event.getType()} from ${event.sender} in room ${room.roomId}`);
       console.log(`toStartOfTimeline: ${toStartOfTimeline}`);
       const eventTime = event.event.origin_server_ts;
@@ -46,11 +48,12 @@ const start = async () => {
       }
 
       if (event.event.room_id !== whatsAppRoomId) {
-        console.log("skipping event in ${event.event.room_id} not active room");
+        console.log(`skipping event in ${event.event.room_id} not active room ${whatsAppRoomId}`);
         return; // don't activate unless in the active room
       }
 
       if (event.isEncrypted()) {
+        console.log(`decrypting event ${event.getType()} in room ${event.event.room_id}`);
         try {
           const crypto = client.crypto;
           if (!crypto) {
@@ -58,10 +61,19 @@ const start = async () => {
             return;
           }
           await event.attemptDecryption(crypto);
+          console.log(`maybe decrypted event ${event.getType()} in room ${event.event.room_id}`, event);
+          if (event.isDecryptionFailure) {
+            console.log(
+              `Failed to decrypt event ${event.getType()} in room ${event.event.room_id}`
+              );
+            return;
+          }
         } catch (err) {
           console.error("Failed to decrypt event:", err);
           return;
         }
+      } else {
+        console.log(`cleartext event ${event.getType()} in room ${event.event.room_id}`);
       }
 
       if (
@@ -81,6 +93,7 @@ const start = async () => {
   );
 
   client.on(sdk.CryptoEvent.RoomKeyRequest, (event) => {
+    console.log('--------------------------------');
     console.log("Room key request received");
   });
 };
