@@ -40,6 +40,16 @@ const start = async () => {
 
       console.log(`Event time: ${new Date(eventTime).toLocaleString()} after script start: ${new Date(scriptStart).toLocaleString()}`);
 
+      if (event.event.sender === userId) {
+        console.log("skipping event from self");
+        return; // don't reply to messages sent by the tool
+      }
+
+      if (event.event.room_id !== whatsAppRoomId) {
+        console.log("skipping event in ${event.event.room_id} not active room");
+        return; // don't activate unless in the active room
+      }
+
       if (event.isEncrypted()) {
         try {
           const crypto = client.crypto;
@@ -52,14 +62,6 @@ const start = async () => {
           console.error("Failed to decrypt event:", err);
           return;
         }
-      }
-
-      if (event.event.sender === userId) {
-        return; // don't reply to messages sent by the tool
-      }
-
-      if (event.event.room_id !== whatsAppRoomId) {
-        return; // don't activate unless in the active room
       }
 
       if (
