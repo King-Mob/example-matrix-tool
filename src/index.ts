@@ -34,11 +34,11 @@ const start = async () => {
       console.log(`toStartOfTimeline: ${toStartOfTimeline}`);
       const eventTime = event.event.origin_server_ts;
 
-      if (!eventTime || scriptStart > eventTime) {
+      if (!eventTime || scriptStart > eventTime * 1000) {
         return; //don't run commands for old messages
       }
 
-      console.log(`Event time: ${eventTime} after script start: ${scriptStart}`);
+      console.log(`Event time: ${new Date(eventTime).toLocaleString()} after script start: ${new Date(scriptStart).toLocaleString()}`);
 
       if (event.isEncrypted()) {
         try {
