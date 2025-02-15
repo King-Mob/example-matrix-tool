@@ -25,7 +25,7 @@ if (!fs.existsSync(dbDir)) {
 }
 
 console.log(`Using SQLite database at: ${dbPath}`);
-const cryptoStore = new SQLiteCryptoStore(dbDir);
+const cryptoStore = new SQLiteCryptoStore(dbDir, true);
 
 export const client = sdk.createClient({
   baseUrl: homeserver,

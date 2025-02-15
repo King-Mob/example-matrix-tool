@@ -133,11 +133,52 @@ interface GetOrAddOutgoingRoomKeyRequestRow {
  */
 export class SQLiteCryptoStore implements CryptoStore {
   private db: Database.Database;
+  private enableSqlLogging: boolean = false;
 
-  constructor(private readonly storagePath: string) {
+  constructor(private readonly storagePath: string, enableSqlLogging: boolean = false) {
     const dbPath = path.join(storagePath, 'crypto.db');
     this.db = new Database(dbPath);
+    this.enableSqlLogging = enableSqlLogging;
     this.setupDatabase();
+  }
+
+  // Enable or disable SQL logging at runtime
+  public setSqlLogging(enabled: boolean): void {
+    this.enableSqlLogging = enabled;
+  }
+
+  private logSql(type: string, sql: string, params?: any[]): void {
+    if (this.enableSqlLogging) {
+      console.log(`SQL ${type}:`, sql);
+      if (params) {
+        console.log('Parameters:', params);
+      }
+    }
+  }
+
+  private prepare(sql: string): Database.Statement {
+    this.logSql('Prepare', sql);
+    return this.db.prepare(sql);
+  }
+
+  private exec(sql: string): void {
+    this.logSql('Exec', sql);
+    this.db.exec(sql);
+  }
+
+  private run(stmt: Database.Statement, ...params: any[]): Database.RunResult {
+    this.logSql('Execute', stmt.source, params);
+    return stmt.run(...params);
+  }
+
+  private get<T = any>(stmt: Database.Statement, ...params: any[]): T {
+    this.logSql('Get', stmt.source, params);
+    return stmt.get(...params) as T;
+  }
+
+  private all<T = any>(stmt: Database.Statement, ...params: any[]): T[] {
+    this.logSql('All', stmt.source, params);
+    return stmt.all(...params) as T[];
   }
 
   async startup(): Promise<CryptoStore> {
@@ -147,7 +188,7 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   async deleteAllData(): Promise<void> {
     // Drop all tables and recreate them
-    this.db.exec(`
+    this.exec(`
       DROP TABLE IF EXISTS state;
       DROP TABLE IF EXISTS rooms;
       DROP TABLE IF EXISTS olm_sessions;
@@ -170,8 +211,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     this.setupDatabase();
   }
 
-  private setupDatabase() {
-    this.db.exec(`
+  private setupDatabase(): void {
+    this.exec(`
       CREATE TABLE IF NOT EXISTS state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -286,14 +327,14 @@ export class SQLiteCryptoStore implements CryptoStore {
     console.log(`Starting transaction in mode: ${mode}, stores: ${Array.from(stores).join(', ')}`);
 
     if (mode === 'readwrite') {
-      this.db.exec('BEGIN TRANSACTION');
+      this.exec('BEGIN TRANSACTION');
     }
 
     try {
       const result = await func(this.db);
 
       if (mode === 'readwrite') {
-        this.db.exec('COMMIT');
+        this.exec('COMMIT');
         console.log('Transaction committed successfully');
       }
 
@@ -301,7 +342,7 @@ export class SQLiteCryptoStore implements CryptoStore {
     } catch (error) {
       console.error('Transaction failed:', error);
       if (mode === 'readwrite') {
-        this.db.exec('ROLLBACK');
+        this.exec('ROLLBACK');
         console.log('Transaction rolled back');
       }
       throw error;
@@ -311,56 +352,56 @@ export class SQLiteCryptoStore implements CryptoStore {
   // Device ID management
   getDeviceId(_txn: unknown, func: (deviceId: string | null) => void): void {
     console.log('Getting device ID');
-    const stmt = this.db.prepare('SELECT value FROM state WHERE key = ?');
-    const result = stmt.get('device_id') as StateRow | undefined;
+    const stmt = this.prepare('SELECT value FROM state WHERE key = ?');
+    const result = this.get<StateRow>(stmt, 'device_id');
     func(result ? result.value : null);
   }
 
   storeDeviceId(_txn: unknown, deviceId: string): void {
     console.log('Storing device ID:', deviceId);
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)');
-    stmt.run('device_id', deviceId);
+    const stmt = this.prepare('INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)');
+    this.run(stmt, 'device_id', deviceId);
   }
 
   // Room management
   getRoom(_txn: unknown, roomId: string, func: (room: IRoomEncryption | null) => void): void {
-    const stmt = this.db.prepare('SELECT config FROM rooms WHERE room_id = ?');
-    const result = stmt.get(roomId) as RoomRow | undefined;
+    const stmt = this.prepare('SELECT config FROM rooms WHERE room_id = ?');
+    const result = this.get<RoomRow>(stmt, roomId) as RoomRow | undefined;
     func(result ? JSON.parse(result.config) : null);
   }
 
   storeRoom(_txn: unknown, roomId: string, config: IRoomEncryption): void {
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO rooms (room_id, config) VALUES (?, ?)');
-    stmt.run(roomId, JSON.stringify(config));
+    const stmt = this.prepare('INSERT OR REPLACE INTO rooms (room_id, config) VALUES (?, ?)');
+    this.run(stmt, roomId, JSON.stringify(config));
   }
 
   // Olm session management
   storeOlmSession(_txn: unknown, sessionId: string, pickle: string): void {
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO olm_sessions (session_id, pickle) VALUES (?, ?)');
-    stmt.run(sessionId, pickle);
+    const stmt = this.prepare('INSERT OR REPLACE INTO olm_sessions (session_id, pickle) VALUES (?, ?)');
+    this.run(stmt, sessionId, pickle);
   }
 
   getOlmSession(_txn: unknown, sessionId: string, func: (pickle: string | null) => void): void {
-    const stmt = this.db.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
-    const result = stmt.get(sessionId) as OlmSessionRow | undefined;
+    const stmt = this.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
+    const result = this.get<OlmSessionRow>(stmt, sessionId) as OlmSessionRow | undefined;
     func(result ? result.pickle : null);
   }
 
   // Example implementation of a few key methods
   getAccount(_txn: unknown, func: (accountPickle: string | null) => void): void {
-    const stmt = this.db.prepare('SELECT pickle FROM account LIMIT 1');
-    const result = stmt.get() as AccountRow | undefined;
+    const stmt = this.prepare('SELECT pickle FROM account LIMIT 1');
+    const result = this.get<AccountRow>(stmt) as AccountRow | undefined;
     func(result ? result.pickle : null);
   }
 
   storeAccount(_txn: unknown, accountPickle: string): void {
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO account (id, pickle) VALUES (1, ?)');
-    stmt.run(accountPickle);
+    const stmt = this.prepare('INSERT OR REPLACE INTO account (id, pickle) VALUES (1, ?)');
+    this.run(stmt, accountPickle);
   }
 
   getCrossSigningKeys(_txn: unknown, func: (keys: Record<string, ICrossSigningKey> | null) => void): void {
-    const stmt = this.db.prepare('SELECT key_id, key_data FROM cross_signing_keys');
-    const rows = stmt.all() as CrossSigningKeyRow[];
+    const stmt = this.prepare('SELECT key_id, key_data FROM cross_signing_keys');
+    const rows = this.all<CrossSigningKeyRow>(stmt) as CrossSigningKeyRow[];
     if (rows.length === 0) {
       func(null);
       return;
@@ -373,16 +414,16 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   storeCrossSigningKeys(_txn: unknown, keys: Record<string, ICrossSigningKey>): void {
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, key_data) VALUES (?, ?)');
+    const stmt = this.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, key_data) VALUES (?, ?)');
     for (const [keyId, keyData] of Object.entries(keys)) {
-      stmt.run(keyId, JSON.stringify(keyData));
+      this.run(stmt, keyId, JSON.stringify(keyData));
     }
   }
 
   // Additional methods for raw key data used by cryptoCallbacks
   getRawCrossSigningKeys(_txn: unknown, func: (keys: Record<string, Uint8Array> | null) => void): void {
-    const stmt = this.db.prepare('SELECT key_id, raw_key FROM cross_signing_keys');
-    const rows = stmt.all() as CrossSigningKeyWithRawRow[];
+    const stmt = this.prepare('SELECT key_id, raw_key FROM cross_signing_keys');
+    const rows = this.all<CrossSigningKeyWithRawRow>(stmt) as CrossSigningKeyWithRawRow[];
     if (rows.length === 0) {
       func(null);
       return;
@@ -397,9 +438,9 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   storeRawCrossSigningKeys(_txn: unknown, keys: Record<string, Uint8Array>): void {
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, raw_key) VALUES (?, ?)');
+    const stmt = this.prepare('INSERT OR REPLACE INTO cross_signing_keys (key_id, raw_key) VALUES (?, ?)');
     for (const [keyId, keyData] of Object.entries(keys)) {
-      stmt.run(keyId, keyData);
+      this.run(stmt, keyId, keyData);
     }
   }
 
@@ -409,8 +450,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     type: K
   ): void {
     console.log('Getting secret store private key:', type);
-    const stmt = this.db.prepare('SELECT key_data FROM secret_store WHERE key_id = ?');
-    const result = stmt.get(type) as SecretStoreRow | undefined;
+    const stmt = this.prepare('SELECT key_data FROM secret_store WHERE key_id = ?');
+    const result = this.get<SecretStoreRow>(stmt, type) as SecretStoreRow | undefined;
     // First convert to unknown, then to the expected type to avoid direct Buffer conversion
     func(result ? (JSON.parse(result.key_data.toString()) as SecretStorePrivateKeys[K]) : null);
   }
@@ -421,8 +462,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     key: SecretStorePrivateKeys[K]
   ): void {
     console.log('Storing secret store private key:', type);
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO secret_store (key_id, key_data) VALUES (?, ?)');
-    stmt.run(type, key);
+    const stmt = this.prepare('INSERT OR REPLACE INTO secret_store (key_id, key_data) VALUES (?, ?)');
+    this.run(stmt, type, key);
   }
 
   // Add these new methods for inbound group sessions
@@ -433,10 +474,10 @@ export class SQLiteCryptoStore implements CryptoStore {
     _txn: unknown
   ): void {
     console.log(`Storing inbound group session - Sender: ${senderCurve25519Key}, Session: ${sessionId}`);
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO inbound_group_sessions (room_id, sender_key, session_id, session_data) VALUES (?, ?, ?, ?)');
+    const stmt = this.prepare('INSERT OR REPLACE INTO inbound_group_sessions (room_id, sender_key, session_id, session_data) VALUES (?, ?, ?, ?)');
     const sessionJson = JSON.stringify(sessionData);
     console.log('Session data size:', sessionJson.length);
-    stmt.run(sessionData.room_id, senderCurve25519Key, sessionId, sessionJson);
+    this.run(stmt, sessionData.room_id, senderCurve25519Key, sessionId, sessionJson);
   }
 
   getEndToEndInboundGroupSession(
@@ -446,8 +487,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     func: (session: InboundGroupSessionData | null, groupSessionWithheld: IWithheld | null) => void
   ): void {
     console.log(`Getting inbound group session - Sender: ${senderCurve25519Key}, Session: ${sessionId}`);
-    const stmt = this.db.prepare('SELECT session_data FROM inbound_group_sessions WHERE sender_key = ? AND session_id = ?');
-    const result = stmt.get(senderCurve25519Key, sessionId) as InboundGroupSessionRow | undefined;
+    const stmt = this.prepare('SELECT session_data FROM inbound_group_sessions WHERE sender_key = ? AND session_id = ?');
+    const result = this.get<InboundGroupSessionRow>(stmt, senderCurve25519Key, sessionId) as InboundGroupSessionRow | undefined;
     if (result) {
       console.log('Found session in database');
     } else {
@@ -461,8 +502,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     func: (session: ISession) => void
   ): void {
     console.log('Getting all inbound group sessions');
-    const stmt = this.db.prepare('SELECT room_id, sender_key, session_id, session_data FROM inbound_group_sessions');
-    const rows = stmt.all() as InboundGroupSessionRow[];
+    const stmt = this.prepare('SELECT room_id, sender_key, session_id, session_data FROM inbound_group_sessions');
+    const rows = this.all<InboundGroupSessionRow>(stmt) as InboundGroupSessionRow[];
     console.log(`Found ${rows.length} sessions in database`);
 
     // Call the callback for each session individually
@@ -478,10 +519,10 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   // Outgoing room key request management
   async getOrAddOutgoingRoomKeyRequest(request: OutgoingRoomKeyRequest): Promise<OutgoingRoomKeyRequest> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state FROM outgoing_room_key_requests WHERE request_id = ?'
     );
-    const result = stmt.get(request.requestId) as GetOrAddOutgoingRoomKeyRequestRow | undefined;
+    const result = this.get<GetOrAddOutgoingRoomKeyRequestRow>(stmt, request.requestId) as GetOrAddOutgoingRoomKeyRequestRow | undefined;
 
     if (result) {
       return {
@@ -495,10 +536,10 @@ export class SQLiteCryptoStore implements CryptoStore {
     }
 
     // Not found, add it
-    const insertStmt = this.db.prepare(
+    const insertStmt = this.prepare(
       'INSERT INTO outgoing_room_key_requests (request_id, request_txn_id, cancellation_txn_id, recipients, request_body, state) VALUES (?, ?, ?, ?, ?, ?)'
     );
-    insertStmt.run(
+    this.run(insertStmt,
       request.requestId,
       request.requestTxnId,
       request.cancellationTxnId,
@@ -511,10 +552,10 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   async getOutgoingRoomKeyRequest(requestBody: IRoomKeyRequestBody): Promise<OutgoingRoomKeyRequest | null> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE request_body = ?'
     );
-    const result = stmt.get(JSON.stringify(requestBody)) as OutgoingRoomKeyRequestRow | undefined;
+    const result = this.get<OutgoingRoomKeyRequestRow>(stmt, JSON.stringify(requestBody)) as OutgoingRoomKeyRequestRow | undefined;
     if (!result) return null;
 
     return {
@@ -528,12 +569,12 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   async getOutgoingRoomKeyRequestByState(wantedStates: number[]): Promise<OutgoingRoomKeyRequest | null> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE state IN (' +
       wantedStates.map(() => '?').join(',') +
       ') LIMIT 1'
     );
-    const result = stmt.get(...wantedStates) as OutgoingRoomKeyRequestRow | undefined;
+    const result = this.get<OutgoingRoomKeyRequestRow>(stmt, ...wantedStates) as OutgoingRoomKeyRequestRow | undefined;
     if (!result) return null;
 
     return {
@@ -547,10 +588,10 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   async getAllOutgoingRoomKeyRequestsByState(wantedState: number): Promise<OutgoingRoomKeyRequest[]> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE state = ?'
     );
-    const results = stmt.all(wantedState) as OutgoingRoomKeyRequestRow[];
+    const results = this.all<OutgoingRoomKeyRequestRow>(stmt, wantedState) as OutgoingRoomKeyRequestRow[];
 
     return results.map(row => ({
       requestId: row.request_id,
@@ -567,10 +608,10 @@ export class SQLiteCryptoStore implements CryptoStore {
     expectedState: number,
     updates: Partial<OutgoingRoomKeyRequest>
   ): Promise<OutgoingRoomKeyRequest | null> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
     );
-    const result = stmt.get(requestId, expectedState) as OutgoingRoomKeyRequestRow | undefined;
+    const result = this.get<OutgoingRoomKeyRequestRow>(stmt, requestId, expectedState) as OutgoingRoomKeyRequestRow | undefined;
     if (!result) return null;
 
     const updateData: Partial<OutgoingRoomKeyRequestRow> = {};
@@ -579,7 +620,7 @@ export class SQLiteCryptoStore implements CryptoStore {
     if (updates.state !== undefined) updateData.state = updates.state;
 
     if (Object.keys(updateData).length > 0) {
-      const updateStmt = this.db.prepare(
+      const updateStmt = this.prepare(
         'UPDATE outgoing_room_key_requests SET ' +
         Object.keys(updateData)
           .map(key => `${key} = ?`)
@@ -587,7 +628,7 @@ export class SQLiteCryptoStore implements CryptoStore {
         ' WHERE request_id = ?'
       );
 
-      updateStmt.run(...Object.values(updateData), requestId);
+      this.run(updateStmt, ...Object.values(updateData), requestId);
     }
 
     return {
@@ -604,14 +645,14 @@ export class SQLiteCryptoStore implements CryptoStore {
     requestId: string,
     expectedState: number
   ): Promise<OutgoingRoomKeyRequest | null> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE request_id = ? AND state = ?'
     );
-    const result = stmt.get(requestId, expectedState) as OutgoingRoomKeyRequestRow | undefined;
+    const result = this.get<OutgoingRoomKeyRequestRow>(stmt, requestId, expectedState) as OutgoingRoomKeyRequestRow | undefined;
     if (!result) return null;
 
-    const deleteStmt = this.db.prepare('DELETE FROM outgoing_room_key_requests WHERE request_id = ?');
-    deleteStmt.run(requestId);
+    const deleteStmt = this.prepare('DELETE FROM outgoing_room_key_requests WHERE request_id = ?');
+    this.run(deleteStmt, requestId);
 
     return {
       requestId: result.request_id,
@@ -625,21 +666,21 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   // Session problem tracking
   async storeEndToEndSessionProblem(deviceKey: string, type: string, fixed: boolean): Promise<void> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'INSERT INTO session_problems (device_key, type, fixed, time) VALUES (?, ?, ?, ?)'
     );
-    stmt.run(deviceKey, type, fixed, Date.now());
+    this.run(stmt, deviceKey, type, fixed, Date.now());
   }
 
   async getEndToEndSessionProblem(deviceKey: string, timestamp: number): Promise<IProblem | null> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       `SELECT type, fixed, time
        FROM session_problems
        WHERE device_key = ? AND time <= ?
        ORDER BY time DESC
        LIMIT 1`
     );
-    const result = stmt.get(deviceKey, timestamp) as SessionProblemRow | undefined;
+    const result = this.get<SessionProblemRow>(stmt, deviceKey, timestamp) as SessionProblemRow | undefined;
 
     if (!result) return null;
 
@@ -651,19 +692,19 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   async filterOutNotifiedErrorDevices(devices: IOlmDevice[]): Promise<IOlmDevice[]> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       `SELECT DISTINCT device_key
        FROM session_problems
        WHERE fixed = true`
     );
-    const fixedDevices = new Set(stmt.all().map((row: { device_key: string }) => row.device_key));
+    const fixedDevices = new Set(this.all<{ device_key: string }>(stmt).map((row: { device_key: string }) => row.device_key));
 
     return devices.filter(device => !fixedDevices.has(device.userId + ":" + device.deviceInfo.deviceId));
   }
 
   // Session backup tracking
   async getSessionsNeedingBackup(limit: number): Promise<ISession[]> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       `SELECT s.room_id, s.sender_key, s.session_id, i.session_data
        FROM sessions_needing_backup s
        INNER JOIN inbound_group_sessions i
@@ -673,7 +714,7 @@ export class SQLiteCryptoStore implements CryptoStore {
        WHERE s.needs_backup = true
        LIMIT ?`
     );
-    const results = stmt.all(limit) as SessionsNeedingBackupRow[];
+    const results = this.all<SessionsNeedingBackupRow>(stmt, limit) as SessionsNeedingBackupRow[];
 
     return results.map(row => ({
       senderKey: row.sender_key,
@@ -683,15 +724,15 @@ export class SQLiteCryptoStore implements CryptoStore {
   }
 
   async countSessionsNeedingBackup(_txn?: unknown): Promise<number> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT COUNT(*) as count FROM sessions_needing_backup WHERE needs_backup = true'
     );
-    const result = stmt.get() as CountRow;
+    const result = this.get<CountRow>(stmt) as CountRow;
     return result.count;
   }
 
   async unmarkSessionsNeedingBackup(sessions: ISession[], _txn?: unknown): Promise<void> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       `UPDATE sessions_needing_backup
        SET needs_backup = false
        WHERE room_id = ? AND sender_key = ? AND session_id = ?`
@@ -704,12 +745,12 @@ export class SQLiteCryptoStore implements CryptoStore {
         console.warn('Session missing room_id in sessionData:', session);
         continue;
       }
-      stmt.run(roomId, session.senderKey, session.sessionId);
+      this.run(stmt, roomId, session.senderKey, session.sessionId);
     }
   }
 
   async markSessionsNeedingBackup(sessions: ISession[], _txn?: unknown): Promise<void> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       `INSERT OR REPLACE INTO sessions_needing_backup (room_id, sender_key, session_id, needs_backup)
        VALUES (?, ?, ?, true)`
     );
@@ -721,7 +762,7 @@ export class SQLiteCryptoStore implements CryptoStore {
         console.warn('Session missing room_id in sessionData:', session);
         continue;
       }
-      stmt.run(roomId, session.senderKey, session.sessionId);
+      this.run(stmt, roomId, session.senderKey, session.sessionId);
     }
   }
 
@@ -732,20 +773,20 @@ export class SQLiteCryptoStore implements CryptoStore {
     sessionId: string,
     _txn?: unknown
   ): Promise<void> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'INSERT OR REPLACE INTO shared_history_inbound_sessions (room_id, sender_key, session_id) VALUES (?, ?, ?)'
     );
-    stmt.run(roomId, senderKey, sessionId);
+    this.run(stmt, roomId, senderKey, sessionId);
   }
 
   async getSharedHistoryInboundGroupSessions(
     roomId: string,
     _txn?: unknown
   ): Promise<[senderKey: string, sessionId: string][]> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT sender_key, session_id FROM shared_history_inbound_sessions WHERE room_id = ?'
     );
-    const results = stmt.all(roomId) as SharedHistoryRow[];
+    const results = this.all<SharedHistoryRow>(stmt, roomId) as SharedHistoryRow[];
 
     return results.map(row => [row.sender_key, row.session_id]);
   }
@@ -755,13 +796,13 @@ export class SQLiteCryptoStore implements CryptoStore {
     data: ParkedSharedHistory,
     _txn?: unknown
   ): Promise<void> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       `INSERT OR REPLACE INTO parked_shared_history
        (room_id, sender_id, sender_key, session_id, session_key, keys_claimed, forwarding_curve25519_key_chain)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
 
-    stmt.run(
+    this.run(stmt,
       roomId,
       data.senderId,
       data.senderKey,
@@ -776,19 +817,19 @@ export class SQLiteCryptoStore implements CryptoStore {
     roomId: string,
     _txn?: unknown
   ): Promise<ParkedSharedHistory[]> {
-    const selectStmt = this.db.prepare(
+    const selectStmt = this.prepare(
       `SELECT sender_id, sender_key, session_id, session_key, keys_claimed, forwarding_curve25519_key_chain
        FROM parked_shared_history
        WHERE room_id = ?`
     );
-    const results = selectStmt.all(roomId) as ParkedSharedHistoryRow[];
+    const results = this.all<ParkedSharedHistoryRow>(selectStmt, roomId) as ParkedSharedHistoryRow[];
 
     if (results.length === 0) {
       return [];
     }
 
-    const deleteStmt = this.db.prepare('DELETE FROM parked_shared_history WHERE room_id = ?');
-    deleteStmt.run(roomId);
+    const deleteStmt = this.prepare('DELETE FROM parked_shared_history WHERE room_id = ?');
+    this.run(deleteStmt, roomId);
 
     return results.map(row => ({
       senderId: row.sender_id,
@@ -802,31 +843,31 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   // Device data management
   getEndToEndDeviceData(_txn: unknown, func: (deviceData: IDeviceData | null) => void): void {
-    const deviceStmt = this.db.prepare('SELECT user_id, device_id, device_info FROM device_data');
-    const trackingStmt = this.db.prepare('SELECT user_id, tracking_status FROM user_tracking_status');
-    const crossSigningStmt = this.db.prepare('SELECT user_id, cross_signing_info FROM user_cross_signing_info');
-    const syncTokenStmt = this.db.prepare('SELECT token FROM sync_token WHERE id = 1');
+    const deviceStmt = this.prepare('SELECT user_id, device_id, device_info FROM device_data');
+    const trackingStmt = this.prepare('SELECT user_id, tracking_status FROM user_tracking_status');
+    const crossSigningStmt = this.prepare('SELECT user_id, cross_signing_info FROM user_cross_signing_info');
+    const syncTokenStmt = this.prepare('SELECT token FROM sync_token WHERE id = 1');
 
     const devices: { [userId: string]: { [deviceId: string]: any } } = {};
     const trackingStatus: { [userId: string]: any } = {};
     let crossSigningInfo: Record<string, any> = {};
 
-    for (const row of deviceStmt.all() as DeviceDataRow[]) {
+    for (const row of this.all<DeviceDataRow>(deviceStmt) as DeviceDataRow[]) {
       if (!devices[row.user_id]) {
         devices[row.user_id] = {};
       }
       devices[row.user_id][row.device_id] = JSON.parse(row.device_info);
     }
 
-    for (const row of trackingStmt.all() as UserTrackingRow[]) {
+    for (const row of this.all<UserTrackingRow>(trackingStmt) as UserTrackingRow[]) {
       trackingStatus[row.user_id] = row.tracking_status;
     }
 
-    for (const row of crossSigningStmt.all() as UserCrossSigningRow[]) {
+    for (const row of this.all<UserCrossSigningRow>(crossSigningStmt) as UserCrossSigningRow[]) {
       crossSigningInfo[row.user_id] = JSON.parse(row.cross_signing_info);
     }
 
-    const syncTokenRow = syncTokenStmt.get() as SyncTokenRow | undefined;
+    const syncTokenRow = this.get<SyncTokenRow>(syncTokenStmt) as SyncTokenRow | undefined;
     const syncToken = syncTokenRow ? syncTokenRow.token : null;
 
     func({
@@ -839,7 +880,7 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   storeEndToEndDeviceData(deviceData: IDeviceData, _txn: unknown): void {
     // Start by clearing existing data since we're replacing everything
-    this.db.exec(`
+    this.exec(`
       DELETE FROM device_data;
       DELETE FROM user_tracking_status;
       DELETE FROM user_cross_signing_info;
@@ -847,48 +888,48 @@ export class SQLiteCryptoStore implements CryptoStore {
     `);
 
     // Prepare statements for bulk inserts
-    const deviceStmt = this.db.prepare(
+    const deviceStmt = this.prepare(
       'INSERT INTO device_data (user_id, device_id, device_info) VALUES (?, ?, ?)'
     );
-    const trackingStmt = this.db.prepare(
+    const trackingStmt = this.prepare(
       'INSERT INTO user_tracking_status (user_id, tracking_status) VALUES (?, ?)'
     );
-    const crossSigningStmt = this.db.prepare(
+    const crossSigningStmt = this.prepare(
       'INSERT INTO user_cross_signing_info (user_id, cross_signing_info) VALUES (?, ?)'
     );
-    const syncTokenStmt = this.db.prepare(
+    const syncTokenStmt = this.prepare(
       'INSERT INTO sync_token (id, token) VALUES (1, ?)'
     );
 
     // Store devices
     for (const [userId, devices] of Object.entries(deviceData.devices)) {
       for (const [deviceId, deviceInfo] of Object.entries(devices)) {
-        deviceStmt.run(userId, deviceId, JSON.stringify(deviceInfo));
+        this.run(deviceStmt, userId, deviceId, JSON.stringify(deviceInfo));
       }
     }
 
     // Store tracking status
     for (const [userId, status] of Object.entries(deviceData.trackingStatus)) {
-      trackingStmt.run(userId, status);
+      this.run(trackingStmt, userId, status);
     }
 
     // Store cross signing info if present
     if (deviceData.crossSigningInfo) {
       for (const [userId, info] of Object.entries(deviceData.crossSigningInfo)) {
-        crossSigningStmt.run(userId, JSON.stringify(info));
+        this.run(crossSigningStmt, userId, JSON.stringify(info));
       }
     }
 
     // Store sync token if present
     if (deviceData.syncToken) {
-      syncTokenStmt.run(deviceData.syncToken);
+      this.run(syncTokenStmt, deviceData.syncToken);
     }
   }
 
   // Session counting and management
   countEndToEndSessions(_txn: unknown, func: (count: number) => void): void {
-    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM olm_sessions');
-    const result = stmt.get() as CountRow;
+    const stmt = this.prepare('SELECT COUNT(*) as count FROM olm_sessions');
+    const result = this.get<CountRow>(stmt) as CountRow;
     func(result.count);
   }
 
@@ -898,8 +939,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     _txn: unknown,
     func: (session: ISessionInfo | null) => void
   ): void {
-    const stmt = this.db.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
-    const result = stmt.get(sessionId) as OlmSessionRow | undefined;
+    const stmt = this.prepare('SELECT pickle FROM olm_sessions WHERE session_id = ?');
+    const result = this.get<OlmSessionRow>(stmt, sessionId) as OlmSessionRow | undefined;
 
     if (!result) {
       func(null);
@@ -918,8 +959,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     _txn: unknown,
     func: (sessions: { [sessionId: string]: ISessionInfo }) => void
   ): void {
-    const stmt = this.db.prepare('SELECT session_id, pickle FROM olm_sessions');
-    const results = stmt.all() as OlmSessionWithIdRow[];
+    const stmt = this.prepare('SELECT session_id, pickle FROM olm_sessions');
+    const results = this.all<OlmSessionWithIdRow>(stmt) as OlmSessionWithIdRow[];
 
     const sessions: { [sessionId: string]: ISessionInfo } = {};
     for (const row of results) {
@@ -937,8 +978,8 @@ export class SQLiteCryptoStore implements CryptoStore {
     _txn: unknown,
     func: (session: ISessionInfo) => void
   ): void {
-    const stmt = this.db.prepare('SELECT session_id, pickle FROM olm_sessions');
-    const results = stmt.all() as OlmSessionWithIdRow[];
+    const stmt = this.prepare('SELECT session_id, pickle FROM olm_sessions');
+    const results = this.all<OlmSessionWithIdRow>(stmt) as OlmSessionWithIdRow[];
 
     for (const row of results) {
       func({
@@ -954,10 +995,10 @@ export class SQLiteCryptoStore implements CryptoStore {
     sessionInfo: ISessionInfo,
     _txn: unknown
   ): void {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'INSERT OR REPLACE INTO olm_sessions (session_id, pickle) VALUES (?, ?)'
     );
-    stmt.run(sessionId, sessionInfo.session);
+    this.run(stmt, sessionId, sessionInfo.session);
   }
 
   // Inbound group session management
@@ -978,12 +1019,12 @@ export class SQLiteCryptoStore implements CryptoStore {
     _txn: unknown
   ): void {
     // Store withheld session data in the same table with a special flag or prefix
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       `INSERT OR REPLACE INTO inbound_group_sessions
        (room_id, sender_key, session_id, session_data)
        VALUES (?, ?, ?, ?)`
     );
-    stmt.run(
+    this.run(stmt,
       sessionData.room_id,
       senderCurve25519Key,
       sessionId,
@@ -993,13 +1034,13 @@ export class SQLiteCryptoStore implements CryptoStore {
 
   // End-to-end room management
   storeEndToEndRoom(roomId: string, roomInfo: IRoomEncryption, _txn: unknown): void {
-    const stmt = this.db.prepare('INSERT OR REPLACE INTO rooms (room_id, config) VALUES (?, ?)');
-    stmt.run(roomId, JSON.stringify(roomInfo));
+    const stmt = this.prepare('INSERT OR REPLACE INTO rooms (room_id, config) VALUES (?, ?)');
+    this.run(stmt, roomId, JSON.stringify(roomInfo));
   }
 
   getEndToEndRooms(_txn: unknown, func: (rooms: Record<string, IRoomEncryption>) => void): void {
-    const stmt = this.db.prepare('SELECT room_id, config FROM rooms');
-    const results = stmt.all() as RoomRow[];
+    const stmt = this.prepare('SELECT room_id, config FROM rooms');
+    const results = this.all<RoomRow>(stmt) as RoomRow[];
 
     const rooms: Record<string, IRoomEncryption> = {};
     for (const row of results) {
@@ -1014,12 +1055,12 @@ export class SQLiteCryptoStore implements CryptoStore {
     deviceId: string,
     wantedStates: number[]
   ): Promise<OutgoingRoomKeyRequest[]> {
-    const stmt = this.db.prepare(
+    const stmt = this.prepare(
       'SELECT request_id, request_txn_id, cancellation_txn_id, request_body, state, recipients FROM outgoing_room_key_requests WHERE state IN (' +
       wantedStates.map(() => '?').join(',') +
       ')'
     );
-    const results = stmt.all(...wantedStates) as OutgoingRoomKeyRequestRow[];
+    const results = this.all<OutgoingRoomKeyRequestRow>(stmt, ...wantedStates) as OutgoingRoomKeyRequestRow[];
 
     return results
       .filter(row => {
