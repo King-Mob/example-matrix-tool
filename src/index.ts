@@ -1,21 +1,26 @@
 import "dotenv/config";
 import * as sdk from "matrix-js-sdk";
-import { RoomEvent, ClientEvent } from "matrix-js-sdk";
+import Olm from "@matrix-org/olm";
 import handleMessage from "./messages";
 import handleReaction from "./reactions";
+import { sendMessage } from "./matrixClientRequests";
+import { client } from "./client";
 
-const { homeserver, access_token, userId, whatsAppRoomId } = process.env;
+const { whatsAppRoomId, userId } = process.env;
 
-const client = sdk.createClient({
-  baseUrl: homeserver,
-  accessToken: access_token,
-  userId,
-});
+if (!whatsAppRoomId) {
+  throw new Error("Missing whatsAppRoomId environment variable");
+}
 
 const start = async () => {
+  // Initialize Olm
+  await Olm.init();
+  global.Olm = Olm;
+
+  await client.initCrypto();
   await client.startClient();
 
-  client.once(ClientEvent.Sync, async (state, prevState, res) => {
+  client.once(sdk.ClientEvent.Sync, async (state, prevState, res) => {
     // state will be 'PREPARED' when the client is ready to use
     console.log(state);
   });
@@ -23,11 +28,25 @@ const start = async () => {
   const scriptStart = Date.now();
 
   client.on(
-    RoomEvent.Timeline,
+    sdk.RoomEvent.Timeline,
     async function (event, room, toStartOfTimeline) {
+      if (event.isEncrypted()) {
+        try {
+          const crypto = client.crypto;
+          if (!crypto) {
+            console.error("Crypto not initialized");
+            return;
+          }
+          await event.attemptDecryption(crypto);
+        } catch (err) {
+          console.error("Failed to decrypt event:", err);
+          return;
+        }
+      }
+
       const eventTime = event.event.origin_server_ts;
 
-      if (scriptStart > eventTime) {
+      if (!eventTime || scriptStart > eventTime) {
         return; //don't run commands for old messages
       }
 
@@ -47,11 +66,20 @@ const start = async () => {
         return; // only use messages or reactions
       }
 
-      if (event.getType() === "m.room.message") handleMessage(event);
+      if (event.getType() === "m.room.message") {
+        handleMessage(event);
+      }
 
       if (event.getType() === "m.reaction") handleReaction(event);
     }
   );
+
+  client.on(sdk.CryptoEvent.RoomKeyRequest, (event) => {
+    console.log("Room key request received");
+  });
 };
 
-start();
+start().catch((err) => {
+  console.error("Error starting client:", err);
+  process.exit(1);
+});
