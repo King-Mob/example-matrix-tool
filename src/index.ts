@@ -1,23 +1,24 @@
 import "dotenv/config";
 import * as sdk from "matrix-js-sdk";
-import Olm from "@matrix-org/olm";
 import handleMessage from "./messages";
 import handleReaction from "./reactions";
 import { sendMessage } from "./matrixClientRequests";
-import { client } from "./client";
+import { getClient } from "./client";
 
-const { whatsAppRoomId, userId } = process.env;
+const { whatsAppRoomId, userId, deviceId } = process.env;
 
 if (!whatsAppRoomId) {
   throw new Error("Missing whatsAppRoomId environment variable");
 }
 
-const start = async () => {
-  // Initialize Olm
-  await Olm.init();
-  global.Olm = Olm;
+if (!deviceId) {
+  throw new Error("Missing deviceId environment variable");
+}
 
-  await client.initCrypto();
+const start = async () => {
+  // Start the client first
+  const client = await getClient(userId, deviceId);
+
   await client.startClient({initialSyncLimit: 0, includeArchivedRooms: false});
 
   client.once(sdk.ClientEvent.Sync, async (state, prevState, res) => {
@@ -55,17 +56,14 @@ const start = async () => {
       if (event.isEncrypted()) {
         console.log(`decrypting event ${event.getType()} in room ${event.event.room_id}`);
         try {
-          const crypto = client.crypto;
-          if (!crypto) {
+          if (!client.isCryptoEnabled()) {
             console.error("Crypto not initialized");
             return;
           }
-          await event.attemptDecryption(crypto);
-          console.log(`maybe decrypted event ${event.getType()} in room ${event.event.room_id}`, event);
-          if (event.isDecryptionFailure) {
+          // The client will handle decryption automatically
+          if (event.isDecryptionFailure()) {
             console.log(
-              `Failed to decrypt event ${event.getType()} in room ${event.event.room_id}`
-              );
+               `Failed to decrypt event ${event.getType()} in room ${event.event.room_id}`);
             return;
           }
         } catch (err) {
@@ -85,10 +83,10 @@ const start = async () => {
       }
 
       if (event.getType() === "m.room.message") {
-        handleMessage(event);
+        handleMessage(client, event);
       }
 
-      if (event.getType() === "m.reaction") handleReaction(event);
+      if (event.getType() === "m.reaction") handleReaction(client, event);
     }
   );
 

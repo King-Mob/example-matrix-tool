@@ -1,21 +1,23 @@
 import { PERSON_NAME, PSEUDO_STATE_EVENT_TYPE } from "./constants";
 import { sendMessage, getEvent } from "./matrixClientRequests";
 import { getPseudoState, setPseudoState } from "./pseudoState";
+import { MatrixClient } from "matrix-js-sdk";
 
 const { userId } = process.env;
 
-const showAssignedRoles = async (roomId: string) => {
-  sendMessage(roomId, "Here are the current people with roles:");
+const showAssignedRoles = async (client: MatrixClient, roomId: string) => {
+  sendMessage(client, roomId, "Here are the current people with roles:");
 
-  const roleState = await getPseudoState(roomId, PSEUDO_STATE_EVENT_TYPE);
+  const roleState = await getPseudoState(client, roomId, PSEUDO_STATE_EVENT_TYPE);
 
   if (!roleState) {
-    sendMessage(roomId, "There are no roles currently assigned.");
+    sendMessage(client, roomId, "There are no roles currently assigned.");
     return;
   }
 
   roleState.content.assignedRoles.forEach((assignedRole) => {
     sendMessage(
+      client,
       roomId,
       `${assignedRole.person.name} has the role ${assignedRole.role.name}. React with 🙏 to remove this role`,
       {
@@ -25,8 +27,9 @@ const showAssignedRoles = async (roomId: string) => {
   });
 };
 
-const assignNewRole = async (roomId: string) => {
+const assignNewRole = async (client: MatrixClient, roomId: string) => {
   sendMessage(
+    client,
     roomId,
     "You're assigning a role. Quote-reply to this message with the name of the person receiving the role.",
     {
@@ -35,7 +38,7 @@ const assignNewRole = async (roomId: string) => {
   );
 };
 
-const removeRole = async (event) => {
+const removeRole = async (client: MatrixClient, event) => {
   const roomId = event.room_id;
   const roleToRemove = event.content.context;
 
@@ -43,7 +46,7 @@ const removeRole = async (event) => {
     return;
   }
 
-  const roleState = await getPseudoState(roomId, PSEUDO_STATE_EVENT_TYPE);
+  const roleState = await getPseudoState(client, roomId, PSEUDO_STATE_EVENT_TYPE);
 
   if (!roleState) {
     return;
@@ -54,18 +57,20 @@ const removeRole = async (event) => {
   );
 
   sendMessage(
+    client,
     roomId,
     `You have removed the role ${roleToRemove.role.name} from ${roleToRemove.person.name}`
   );
 
-  setPseudoState(roomId, PSEUDO_STATE_EVENT_TYPE, {
+  setPseudoState(client, roomId, PSEUDO_STATE_EVENT_TYPE, {
     assignedRoles: remainingRoles,
   });
 };
 
-const handleReaction = async (event) => {
+const handleReaction = async (client: MatrixClient, event) => {
   const reactionInfo = event.event.content["m.relates_to"];
   const eventFromReaction = (await getEvent(
+    client,
     event.event.room_id,
     reactionInfo.event_id
   )) as any;
@@ -76,20 +81,21 @@ const handleReaction = async (event) => {
 
   //match the reaction to the outcome
   if (reactionEmoji.includes("❤️")) {
-    showAssignedRoles(event.event.room_id);
+    showAssignedRoles(client, event.event.room_id);
     return;
   }
   if (reactionEmoji.includes("👍")) {
-    assignNewRole(event.event.room_id);
+    assignNewRole(client, event.event.room_id);
     return;
   }
   if (reactionEmoji.includes("🙏")) {
-    removeRole(eventFromReaction);
+    removeRole(client, eventFromReaction);
     return;
   }
 
   //reaction not recognised
   sendMessage(
+    client,
     event.room_id,
     "🤖Example Tool🤖: Sorry, I don't know that reaction."
   );

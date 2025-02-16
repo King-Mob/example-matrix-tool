@@ -1,10 +1,20 @@
-import { client } from "./client";
+import { MatrixClient } from "matrix-js-sdk";
 
-export const sendEvent = async (roomId: string, content: any, type: string) => {
+export const sendEvent = async (
+  client: MatrixClient,
+  roomId: string,
+  type: string,
+  content: any
+) => {
   return client.sendEvent(roomId, type, content);
 };
 
-export const sendMessage = async (roomId: string, message: string, context = {}) => {
+export const sendMessage = async (
+  client: MatrixClient,
+  roomId: string,
+  message: string,
+  context = {}
+) => {
   return client.sendEvent(roomId, "m.room.message", {
     body: message,
     msgtype: "m.text",
@@ -12,11 +22,18 @@ export const sendMessage = async (roomId: string, message: string, context = {})
   });
 };
 
-export const getEvent = async (roomId: string, eventId: string) => {
+export const getEvent = async (
+  client: MatrixClient,
+  roomId: string,
+  eventId: string
+) => {
   return client.fetchRoomEvent(roomId, eventId);
 };
 
-export const getRoomEvents = async (roomId: string) => {
+export const getRoomEvents = async (
+  client: MatrixClient,
+  roomId: string
+) => {
   const room = client.getRoom(roomId);
   if (!room) {
     throw new Error(`Room ${roomId} not found`);
@@ -30,6 +47,7 @@ export const getRoomEvents = async (roomId: string) => {
 };
 
 export const redactEvent = async (
+  client: MatrixClient,
   roomId: string,
   eventId: string,
   redactionReason: string
