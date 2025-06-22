@@ -3,8 +3,21 @@ import * as sdk from "matrix-js-sdk";
 import { RoomEvent, ClientEvent } from "matrix-js-sdk";
 import handleMessage from "./messages";
 import handleReaction from "./reactions";
+import {
+  checkForSignalTrigger,
+  handleSignalTrigger,
+} from "./modules/signalTrigger/signalTrigger";
+import {
+  checkForWhatsAppTrigger,
+  handleWhatsAppTrigger,
+} from "./modules/whatsAppTrigger/whatsAppTrigger";
+import {
+  compareLinkedRoomIds,
+  retrieveLinkedRoomId,
+} from "./modules/messageHandler/messageHandler";
 
-const { homeserver, access_token, userId, whatsAppRoomId } = process.env;
+const { homeserver, access_token, userId, whatsAppRoomId, signalRoomId } =
+  process.env;
 
 const client = sdk.createClient({
   baseUrl: homeserver,
@@ -32,13 +45,20 @@ const start = async () => {
       }
 
       if (event.event.sender === userId) {
-        console.log('SELF MESSAGE');
         //return; // don't reply to messages sent by the tool
+        console.log(`SELF MESSAGE`);
       }
 
-      if (event.event.room_id !== whatsAppRoomId) {
+      console.log(`CHECKING FOR TRIGGERS`);
+      checkforTriggers(event);
+
+      if (!compareLinkedRoomIds(event.getRoomId())) {
         return; // don't activate unless in the active room
       }
+
+      //console.log(`EVENT ${event.getRoomId()}`);
+      console.log(`EVENT`);
+      const linkedId = retrieveLinkedRoomId(event.getRoomId());
 
       if (
         event.getType() !== "m.room.message" &&
@@ -48,11 +68,31 @@ const start = async () => {
         return; // only use messages or reactions
       }
 
-      if (event.getType() === "m.room.message") handleMessage(event);
+      console.log(`IS MESSAGE`);
+      if (event.getType() === "m.room.message") handleMessage(event, linkedId);
 
       if (event.getType() === "m.reaction") handleReaction(event);
     }
   );
+};
+
+const checkforTriggers = (event: sdk.MatrixEvent) => {
+  if (
+    event.getType() === "m.room.message" &&
+    checkForSignalTrigger(event.event.content.body)
+  ) {
+        console.log(`HANDLE SIGNAL TRIGGER`);
+        handleSignalTrigger(event);
+        
+    }
+
+  if (
+    event.getType() === "m.room.message" &&
+    checkForWhatsAppTrigger(event.event.content.body)
+  ) {
+        console.log(`HANDLE WHATSAPP TRIGGER`);
+        handleWhatsAppTrigger(event);
+    }
 };
 
 start();
