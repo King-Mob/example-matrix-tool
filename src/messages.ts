@@ -8,7 +8,7 @@ const { userId } = process.env;
 const hello = async (roomId: string) => {
   sendMessage(
     roomId,
-    `🤖Example Tool🤖: Hello I'm the matrix example tool. 
+    `🤖Example Tool🤖: Hello I'm Neo the matrix example tool. 
     I track who has been assigned roles in this group. 
     React to this message with:\n
     ❤️ to see the current assigned roles\n
@@ -93,7 +93,8 @@ const handleMessage = async (event) => {
   }
 
   //if message has the tool's wake word, say hello
-  if (message.includes("example")) {
+  if (message.includes("altexample")) {
+    console.log("Got altexample");
     hello(room_id);
     return;
   }

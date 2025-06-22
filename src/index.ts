@@ -32,7 +32,8 @@ const start = async () => {
       }
 
       if (event.event.sender === userId) {
-        return; // don't reply to messages sent by the tool
+        console.log('SELF MESSAGE');
+        //return; // don't reply to messages sent by the tool
       }
 
       if (event.event.room_id !== whatsAppRoomId) {
