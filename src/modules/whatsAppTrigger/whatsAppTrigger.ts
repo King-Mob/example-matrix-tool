@@ -33,12 +33,13 @@ export const matchGroupId = (whatsAppRoomId, signalRoomId) => {
     const newData = data.map((groupIds) => {
     //console.log(`IF CONDITION IS ${groupIds.length >= 2 && groupIds[1] == signalRoomId && groupIds[0] == "xx"}`);
     console.log(`GROUPIDS: ${groupIds}`);
-    console.log(`IF CONDITION IS ${groupIds.length >= 1 && groupIds[1] == signalRoomId && groupIds[0] == "xx"}`);
+    console.log(`IF CONDITION IS ${groupIds.length >= 1 && groupIds[1] == signalRoomId}`);
     console.log(`SECOND THING: ${groupIds[1]}`);
     console.log(`SIGNALROOMID: ${signalRoomId}`);
     console.log(groupIds[1] == signalRoomId);
-    console.log(groupIds[0] == "xx");
-      if ( groupIds.length >= 1 && groupIds[1] == signalRoomId.trim() && groupIds[0] == "xx") {
+    //console.log(groupIds[0] == "xx");
+      //if ( groupIds.length >= 1 && groupIds[1] == signalRoomId.trim() && groupIds[0] == "xx") {
+      if ( groupIds.length >= 1 && groupIds[1] == signalRoomId.trim()) {
         console.log(`GOT ${signalRoomId}`);
         return [whatsAppRoomId, signalRoomId];
       } else {
