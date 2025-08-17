@@ -1,38 +1,35 @@
-import { PERSON_NAME, PSEUDO_STATE_EVENT_TYPE } from "./constants";
-import { sendMessage, getEvent } from "./matrixClientRequests";
+import { PERSON_NAME } from "./constants";
 import { getPseudoState, setPseudoState } from "./pseudoState";
 
-const { userId } = process.env;
-
 const showAssignedRoles = async (roomId: string) => {
-  sendMessage(roomId, "Here are the current people with roles:");
+  const messages = [];
+  messages.push({ message: "Here are the current people with roles:" });
 
-  const roleState = await getPseudoState(roomId, PSEUDO_STATE_EVENT_TYPE);
+  const roleState = await getPseudoState(roomId);
 
-  if (!roleState) {
-    sendMessage(roomId, "There are no roles currently assigned.");
-    return;
+  if (!roleState || !roleState.assignedRoles || roleState.assignedRoles.length === 0) {
+    messages.push({ message: "There are no roles currently assigned." });
+    return messages;
   }
 
-  roleState.content.assignedRoles.forEach((assignedRole) => {
-    sendMessage(
-      roomId,
-      `${assignedRole.person.name} has the role ${assignedRole.role.name}. React with 🙏 to remove this role`,
-      {
-        ...assignedRole,
-      }
+  roleState.assignedRoles.forEach((assignedRole) => {
+    messages.push({
+      message: `${assignedRole.person.name} has the role ${assignedRole.role.name}. React with 🙏 to remove this role`,
+      context: { ...assignedRole }
+    }
     );
   });
+
+  return messages;
 };
 
-const assignNewRole = async (roomId: string) => {
-  sendMessage(
-    roomId,
-    "You're assigning a role. Quote-reply to this message with the name of the person receiving the role.",
-    {
+const assignNewRole = async () => {
+  return {
+    message: "You're assigning a role. Quote-reply to this message with the name of the person receiving the role.",
+    context: {
       expecting: PERSON_NAME,
     }
-  );
+  };
 };
 
 const removeRole = async (event) => {
@@ -43,57 +40,44 @@ const removeRole = async (event) => {
     return;
   }
 
-  const roleState = await getPseudoState(roomId, PSEUDO_STATE_EVENT_TYPE);
+  const roleState = await getPseudoState(roomId);
 
   if (!roleState) {
     return;
   }
 
-  const remainingRoles = roleState.content.assignedRoles.filter(
+  const remainingRoles = roleState.assignedRoles.filter(
     (assignedRole) => assignedRole.id !== roleToRemove.id
   );
 
-  sendMessage(
-    roomId,
-    `You have removed the role ${roleToRemove.role.name} from ${roleToRemove.person.name}`
-  );
-
-  setPseudoState(roomId, PSEUDO_STATE_EVENT_TYPE, {
+  setPseudoState(roomId, {
     assignedRoles: remainingRoles,
   });
+
+  return { message: `You have removed the role ${roleToRemove.role.name} from ${roleToRemove.person.name}` };
 };
 
-const handleReaction = async (event) => {
-  const reactionInfo = event.event.content["m.relates_to"];
-  const eventFromReaction = (await getEvent(
-    event.event.room_id,
-    reactionInfo.event_id
-  )) as any;
+const handleReaction = async (event, botUserId) => {
+  const reactionInfo = event.content["m.relates_to"];
+  const eventFromReaction = event.prevEvent;
 
-  if (eventFromReaction.sender !== userId) return;
+  if (eventFromReaction.sender !== botUserId) return;
 
   const reactionEmoji = reactionInfo.key.trim();
 
   //match the reaction to the outcome
   if (reactionEmoji.includes("❤️")) {
-    showAssignedRoles(event.event.room_id);
-    return;
+    return showAssignedRoles(event.room_id);
   }
   if (reactionEmoji.includes("👍")) {
-    assignNewRole(event.event.room_id);
-    return;
+    return assignNewRole();
   }
   if (reactionEmoji.includes("🙏")) {
-    removeRole(eventFromReaction);
-    return;
+    return removeRole(eventFromReaction);
   }
 
   //reaction not recognised
-  sendMessage(
-    event.room_id,
-    "🤖Example Tool🤖: Sorry, I don't know that reaction."
-  );
-  return;
+  return "🤖Example Tool🤖: Sorry, I don't know that reaction."
 };
 
 export default handleReaction;

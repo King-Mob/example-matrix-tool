@@ -1,57 +1,54 @@
-import "dotenv/config";
-import * as sdk from "matrix-js-sdk";
-import { RoomEvent, ClientEvent } from "matrix-js-sdk";
+import express from "express";
+import * as fs from "fs";
+import { v4 as uuidv4 } from "uuid";
 import handleMessage from "./messages";
 import handleReaction from "./reactions";
 
-const { homeserver, access_token, userId, whatsAppRoomId } = process.env;
+const port = 5049;
 
-const client = sdk.createClient({
-  baseUrl: homeserver,
-  accessToken: access_token,
-  userId,
-});
+const moduleRegistration = {
+  id: "example",
+  uuid: uuidv4(),
+  url: `http://localhost:${port}`,
+  emoji: "👍",
+  wake_word: "example",
+  title: "Example App",
+  description: "This module manages a list of roles",
+  event_types: [
+    "m.room.message",
+    "m.reaction"
+  ]
+}
 
-const start = async () => {
-  await client.startClient();
+function generateRegistrationFile() {
+  fs.writeFileSync(`./${moduleRegistration.id}.json`, JSON.stringify(moduleRegistration));
+}
 
-  client.once(ClientEvent.Sync, async (state, prevState, res) => {
-    // state will be 'PREPARED' when the client is ready to use
-    console.log(state);
+async function start() {
+
+  const app = express();
+  app.use(express.json());
+
+  app.post("/", async (req, res) => {
+    const { event, botUserId } = req.body;
+
+    console.log(event)
+    let response = {};
+
+    if (event.type === "m.room.message")
+      response = await handleMessage(event, botUserId);
+
+    if (event.type === "m.reaction")
+      response = await handleReaction(event, botUserId);
+
+    console.log(response)
+
+    res.send({ success: true, response });
   });
 
-  const scriptStart = Date.now();
 
-  client.on(
-    RoomEvent.Timeline,
-    async function (event, room, toStartOfTimeline) {
-      const eventTime = event.event.origin_server_ts;
-
-      if (scriptStart > eventTime) {
-        return; //don't run commands for old messages
-      }
-
-      if (event.event.sender === userId) {
-        return; // don't reply to messages sent by the tool
-      }
-
-      if (event.event.room_id !== whatsAppRoomId) {
-        return; // don't activate unless in the active room
-      }
-
-      if (
-        event.getType() !== "m.room.message" &&
-        event.getType() !== "m.reaction"
-      ) {
-        console.log("skipping event:", event);
-        return; // only use messages or reactions
-      }
-
-      if (event.getType() === "m.room.message") handleMessage(event);
-
-      if (event.getType() === "m.reaction") handleReaction(event);
-    }
-  );
+  app.listen(port);
 };
 
+generateRegistrationFile();
 start();
