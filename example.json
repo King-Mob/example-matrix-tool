@@ -1,1 +1,1 @@
-{"id":"example","uuid":"7b7a1ac9-b1d8-45c2-a886-30920e351905","url":"http://localhost:5049","emoji":"👍","wake_word":"example","title":"Example App","description":"This module manages a list of roles","event_types":["m.room.message","m.reaction"]}
+{"id":"example","uuid":"91e5583b-7350-4ad9-a4aa-7ee33088a7f7","url":"http://localhost:5049","emoji":"👍","wake_word":"example","title":"Example App","description":"This module manages a list of roles","event_types":["m.room.message","m.reaction"]}
